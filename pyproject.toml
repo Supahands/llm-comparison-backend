@@ -1,0 +1,19 @@
+[tool.poetry]
+name = "llm-comparison-backend"
+version = "0.1.0"
+description = "This is a project to compare llm's backend will be using modal mainly"
+authors = ["OriginalByteMe <noahrijkaard@gmail.com>"]
+license = "Apache 2.0"
+readme = "README.md"
+package-mode = false
+
+[tool.poetry.dependencies]
+python = "^3.10"
+modal = "^0.64.207"
+
+[tool.poetry.group.dev.dependencies]
+ruff = "^0.7.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

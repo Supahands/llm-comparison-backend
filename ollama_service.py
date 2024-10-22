@@ -8,7 +8,7 @@ from fastapi.responses import StreamingResponse
 from modal import gpu
 
 # Default server port.
-MODEL_IDS: str = ["llama3:8b", "llama3.2", "phi3.5", "mistral", "gemma2", "qwen2.5", "nemotron", "nemotron-mini", "yi1.5", "u1i/sea-lion"]
+MODEL_IDS: str = ["llama3:8b", "llama3.2", "phi3.5", "mistral", "gemma2", "qwen2.5", "nemotron", "nemotron-mini", "u1i/sea-lion"]
 OLLAMA_PORT: int = 11434
 OLLAMA_URL: str = f"http://localhost:{OLLAMA_PORT}"
 

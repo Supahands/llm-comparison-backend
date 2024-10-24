@@ -104,6 +104,7 @@ def update_model_db():
             .execute()
         )
         logging.info(f"Removed model from DB: {delete_response.data}")
+       
 
 
 image = (

@@ -2,6 +2,7 @@ import os
 import logging
 from typing import List, Optional
 from fastapi import FastAPI, HTTPException, status
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from modal import Image, App, asgi_app, Secret
@@ -13,6 +14,20 @@ web_app = FastAPI(
     title="LLM Comparison API",
     description="API for interacting with different language models.",
     version="1.0.0",
+)
+
+origins = [
+    "http://localhost:3000",
+    "https://eval.supa.so",
+]
+
+# Add CORS middleware
+web_app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 image = Image.debian_slim().pip_install(

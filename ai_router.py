@@ -4,8 +4,8 @@ from typing import List, Optional
 from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-from openai.error import OpenAIError
-
+from contextlib import contextmanager
+from openai import OpenAIError
 from modal import Image, App, asgi_app, Secret
 
 # Configure logging
@@ -40,6 +40,7 @@ llm_compare_app = App(
     secrets=[
         Secret.from_name("SUPABASE_SECRETS"),
         Secret.from_name("OLLAMA_API"),
+        Secret.from_name("llm_comparison_github     ")
     ],
 )
 
@@ -118,6 +119,43 @@ async def fetch_models_from_supabase() -> List[dict]:
     return response.data
 
 
+@contextmanager
+def temporary_env_var(key: str, value: str):
+    """Context manager to temporarily set an environment variable."""
+    original_value = os.environ.get(key)
+    os.environ[key] = value
+    try:
+        yield
+    finally:
+        if original_value is None:
+            del os.environ[key]
+        else:
+            os.environ[key] = original_value
+
+
+async def handle_completion(
+    model_name: str, message: str, api_base: Optional[str] = None
+):
+    """Handle the completion call and return the response."""
+    try:
+        if api_base:
+            logging.info(f"Using API base: {api_base}")
+            response_obj = completion(
+                model=model_name,
+                messages=[{"content": message, "role": "user"}],
+                api_base=api_base,
+            )
+        else:
+            response_obj = completion(
+                model=model_name,
+                messages=[{"content": message, "role": "user"}],
+            )
+        return response_obj
+    except OpenAIError as e:
+        logging.error(f"Error during completion: {e}")
+        raise HTTPException(status_code=500, detail="Error during completion")
+
+
 @web_app.post(
     "/message",
     response_model=ModelResponse,
@@ -150,62 +188,29 @@ async def messaging(request: MessageRequest):
     provider = model_info["provider"]
     logging.info(f"Provider: {provider}")
 
-    try:
-        if provider == "ollama":
-            model_name = f"ollama/{model_name}"
-            logging.info(f"Updated model name for Ollama: {model_name}")
-            api_url = os.environ["OLLAMA_API_URL"]
-            logging.info(f"API URL for Ollama: {api_url}")
-            try:
-                response_obj = completion(
-                    model=model_name,
-                    messages=[{"content": message, "role": "user"}],
-                    api_base=api_url,
-                )
-            except OpenAIError as e:
-                logging.error(f"Error during Ollama completion: {e}")
-                raise HTTPException(status_code=500, detail="Error during Ollama completion")
-        elif provider == "github":
+    if provider == "ollama":
+        model_name = f"ollama/{model_name}"
+        logging.info(f"Updated model name for Ollama: {model_name}")
+        api_url = os.environ["OLLAMA_API_URL"]
+        logging.info(f"API URL for Ollama: {api_url}")
+        response_obj = await handle_completion(model_name, message, api_base=api_url)
+    elif provider == "github":
+        model_name = f"github/{model_name}"
+        logging.info(f"Updated model name for GitHub: {model_name}")
+        response_obj = await handle_completion(model_name, message)
+    elif provider in ["openai", "anthropic"]:
+        if not api_key:
+            logging.info("No API key provided, defaulting to GitHub provider")
             model_name = f"github/{model_name}"
             logging.info(f"Updated model name for GitHub: {model_name}")
-            try:
-                response_obj = completion(
-                    model=model_name,
-                    messages=[{"content": message, "role": "user"}],
-                )
-            except OpenAIError as e:
-                logging.error(f"Error during GitHub completion: {e}")
-                raise HTTPException(status_code=500, detail="Error during GitHub completion")
-        elif provider in ["openai", "anthropic"]:
-            if not api_key:
-                logging.info("No API key provided, defaulting to GitHub provider")
-                model_name = f"github/{model_name}"
-                logging.info(f"Updated model name for GitHub: {model_name}")
-                try:
-                    response_obj = completion(
-                        model=model_name,
-                        messages=[{"content": message, "role": "user"}],
-                    )
-                except OpenAIError as e:
-                    logging.error(f"Error during GitHub completion: {e}")
-                    raise HTTPException(status_code=500, detail="Error during GitHub completion")
-            else:
-                os.environ["API_KEY"] = api_key
-                logging.info("Using API key for provider")
-                try:
-                    response_obj = completion(
-                        model=model_name,
-                        messages=[{"content": message, "role": "user"}],
-                    )
-                except OpenAIError as e:
-                    logging.error(f"Error during {provider} completion: {e}")
-                    raise HTTPException(status_code=500, detail=f"Error during {provider} completion")
+            response_obj = await handle_completion(model_name, message)
         else:
-            logging.warning(f"Provider {provider} is not supported")
-            raise HTTPException(status_code=400, detail="Provider not supported")
-    finally:
-        if provider in ["openai", "anthropic"] and api_key:
-            del os.environ["API_KEY"]
+            with temporary_env_var("API_KEY", api_key):
+                logging.info("Using API key for provider")
+                response_obj = await handle_completion(model_name, message)
+    else:
+        logging.warning(f"Provider {provider} is not supported")
+        raise HTTPException(status_code=400, detail="Provider not supported")
 
     return response_obj
 

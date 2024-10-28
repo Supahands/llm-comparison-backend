@@ -100,6 +100,9 @@ class ModelResponse(BaseModel):
 class MessageRequest(BaseModel):
     model: str = Field(..., description="Name of the model to use.")
     message: str = Field(..., description="Message text to send to the model.")
+    api_key: Optional[str] = Field(
+        None, description="API key if required by the provider."
+    )
 
 
 class ModelInfo(BaseModel):
@@ -130,6 +133,7 @@ async def messaging(request: MessageRequest):
     logging.info("Received /message request")
     model_name = request.model
     message = request.message
+    api_key = request.api_key
     logging.info(f"Model name: {model_name}")
     logging.info(f"Message: {message}")
 
@@ -145,29 +149,44 @@ async def messaging(request: MessageRequest):
     provider = model_info["provider"]
     logging.info(f"Provider: {provider}")
 
-    if provider == "ollama":
-        model_name = f"ollama/{model_name}"
-        logging.info(f"Updated model name for ollama: {model_name}")
-        api_url = os.environ["OLLAMA_API_URL"]
-        logging.info(f"API URL for ollama: {api_url}")
-        response_obj = completion(
-            model=model_name,
-            messages=[{"content": message, "role": "user"}],
-            api_base=api_url,
-        )
-    else:
-        try:
-            logging.info(f"Calling completion for model {model_name}")
+    try:
+        if provider == "ollama":
+            model_name = f"ollama/{model_name}"
+            logging.info(f"Updated model name for Ollama: {model_name}")
+            api_url = os.environ["OLLAMA_API_URL"]
+            logging.info(f"API URL for Ollama: {api_url}")
+            response_obj = completion(
+                model=model_name,
+                messages=[{"content": message, "role": "user"}],
+                api_base=api_url,
+            )
+        elif provider == "github":
+            model_name = f"github/{model_name}"
+            logging.info(f"Updated model name for GitHub: {model_name}")
             response_obj = completion(
                 model=model_name,
                 messages=[{"content": message, "role": "user"}],
             )
-            logging.info("Received response from completion")
-        except Exception as e:
-            logging.error(f"Error during completion: {e}")
-            raise HTTPException(status_code=500, detail="Error during model completion")
+        elif provider in ["openai", "anthropic"]:
+            if not api_key:
+                logging.warning("API key is required for this provider")
+                raise HTTPException(
+                    status_code=400, detail="API key is required for this provider"
+                )
+            
+            os.environ["OPENAI_API_KEY"] = api_key
+            logging.info("Using API key for provider")
+            response_obj = completion(
+                model=model_name,
+                messages=[{"content": message, "role": "user"}],
+            )
+        else:
+            logging.warning(f"Provider {provider} is not supported")
+            raise HTTPException(status_code=400, detail="Provider not supported")
+    finally:
+        if provider in ["openai", "anthropic"]:
+            del os.environ["OPENAI_API_KEY"]
 
-    # Return the response_obj directly
     return response_obj
 
 

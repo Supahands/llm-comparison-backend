@@ -13,7 +13,14 @@ from modal import gpu, Secret, Image
 logging.basicConfig(level=logging.INFO)
 
 # Default server port.
-MODEL_IDS: list[str] = ["llama3:8b", "llama3.2", "mistral", "nemotron", "gemma2", "qwen2.5"]
+MODEL_IDS: list[str] = [
+    "llama3:8b",
+    "llama3.2",
+    "mistral",
+    "nemotron",
+    "gemma2",
+    "qwen2.5",
+]
 
 OLLAMA_PORT: int = 11434
 OLLAMA_URL: str = f"http://localhost:{OLLAMA_PORT}"
@@ -104,7 +111,6 @@ def update_model_db():
             .execute()
         )
         logging.info(f"Removed model from DB: {delete_response.data}")
-       
 
 
 image = (

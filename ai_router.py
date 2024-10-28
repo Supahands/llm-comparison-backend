@@ -4,6 +4,7 @@ from typing import List, Optional
 from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+from openai.error import OpenAIError
 
 from modal import Image, App, asgi_app, Secret
 
@@ -31,7 +32,7 @@ web_app.add_middleware(
 )
 
 image = Image.debian_slim().pip_install(
-    ["litellm", "supabase", "pydantic==2.5.3", "fastapi==0.109.0"]
+    ["litellm", "supabase", "pydantic==2.5.3", "fastapi==0.109.0", "openai"]
 )
 llm_compare_app = App(
     name="llm-compare-api",
@@ -155,37 +156,56 @@ async def messaging(request: MessageRequest):
             logging.info(f"Updated model name for Ollama: {model_name}")
             api_url = os.environ["OLLAMA_API_URL"]
             logging.info(f"API URL for Ollama: {api_url}")
-            response_obj = completion(
-                model=model_name,
-                messages=[{"content": message, "role": "user"}],
-                api_base=api_url,
-            )
+            try:
+                response_obj = completion(
+                    model=model_name,
+                    messages=[{"content": message, "role": "user"}],
+                    api_base=api_url,
+                )
+            except OpenAIError as e:
+                logging.error(f"Error during Ollama completion: {e}")
+                raise HTTPException(status_code=500, detail="Error during Ollama completion")
         elif provider == "github":
             model_name = f"github/{model_name}"
             logging.info(f"Updated model name for GitHub: {model_name}")
-            response_obj = completion(
-                model=model_name,
-                messages=[{"content": message, "role": "user"}],
-            )
+            try:
+                response_obj = completion(
+                    model=model_name,
+                    messages=[{"content": message, "role": "user"}],
+                )
+            except OpenAIError as e:
+                logging.error(f"Error during GitHub completion: {e}")
+                raise HTTPException(status_code=500, detail="Error during GitHub completion")
         elif provider in ["openai", "anthropic"]:
             if not api_key:
-                logging.warning("API key is required for this provider")
-                raise HTTPException(
-                    status_code=400, detail="API key is required for this provider"
-                )
-            
-            os.environ["OPENAI_API_KEY"] = api_key
-            logging.info("Using API key for provider")
-            response_obj = completion(
-                model=model_name,
-                messages=[{"content": message, "role": "user"}],
-            )
+                logging.info("No API key provided, defaulting to GitHub provider")
+                model_name = f"github/{model_name}"
+                logging.info(f"Updated model name for GitHub: {model_name}")
+                try:
+                    response_obj = completion(
+                        model=model_name,
+                        messages=[{"content": message, "role": "user"}],
+                    )
+                except OpenAIError as e:
+                    logging.error(f"Error during GitHub completion: {e}")
+                    raise HTTPException(status_code=500, detail="Error during GitHub completion")
+            else:
+                os.environ["API_KEY"] = api_key
+                logging.info("Using API key for provider")
+                try:
+                    response_obj = completion(
+                        model=model_name,
+                        messages=[{"content": message, "role": "user"}],
+                    )
+                except OpenAIError as e:
+                    logging.error(f"Error during {provider} completion: {e}")
+                    raise HTTPException(status_code=500, detail=f"Error during {provider} completion")
         else:
             logging.warning(f"Provider {provider} is not supported")
             raise HTTPException(status_code=400, detail="Provider not supported")
     finally:
-        if provider in ["openai", "anthropic"]:
-            del os.environ["OPENAI_API_KEY"]
+        if provider in ["openai", "anthropic"] and api_key:
+            del os.environ["API_KEY"]
 
     return response_obj
 

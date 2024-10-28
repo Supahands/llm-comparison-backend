@@ -1162,13 +1162,13 @@ typing-extensions = {version = ">=4.1.0", markers = "python_version < \"3.11\""}
 
 [[package]]
 name = "openai"
-version = "1.52.1"
+version = "1.52.2"
 description = "The official Python library for the openai API"
 optional = false
 python-versions = ">=3.7.1"
 files = [
-    {file = "openai-1.52.1-py3-none-any.whl", hash = "sha256:f23e83df5ba04ee0e82c8562571e8cb596cd88f9a84ab783e6c6259e5ffbfb4a"},
-    {file = "openai-1.52.1.tar.gz", hash = "sha256:383b96c7e937cbec23cad5bf5718085381e4313ca33c5c5896b54f8e1b19d144"},
+    {file = "openai-1.52.2-py3-none-any.whl", hash = "sha256:57e9e37bc407f39bb6ec3a27d7e8fb9728b2779936daa1fcf95df17d3edfaccc"},
+    {file = "openai-1.52.2.tar.gz", hash = "sha256:87b7d0f69d85f5641678d414b7ee3082363647a5c66a462ed7f3ccb59582da0d"},
 ]
 
 [package.dependencies]
@@ -2598,4 +2598,4 @@ type = ["pytest-mypy"]
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.10"
-content-hash = "089625c747a443a6496fd64f21b9f2f24ac99f389d39305644d038f834e1c022"
+content-hash = "077d6652530020023d3813235aa873661fd78773bd1884d0deb191bacfd85a76"

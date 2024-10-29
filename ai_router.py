@@ -1,5 +1,6 @@
 import os
 import logging
+import time
 from typing import List, Optional
 from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -40,7 +41,7 @@ llm_compare_app = App(
     secrets=[
         Secret.from_name("SUPABASE_SECRETS"),
         Secret.from_name("OLLAMA_API"),
-        Secret.from_name("llm_comparison_github     ")
+        Secret.from_name("llm_comparison_github")
     ],
 )
 
@@ -87,6 +88,7 @@ class Usage(BaseModel):
     total_tokens: int
     completion_tokens_details: Optional[dict] = None
     prompt_tokens_details: Optional[dict] = None
+    response_time: float  # New field for response time in milliseconds
 
 
 class ModelResponse(BaseModel):
@@ -138,6 +140,8 @@ async def handle_completion(
 ):
     """Handle the completion call and return the response."""
     try:
+        start_time = time.time()  # Start timer before calling completion
+
         if api_base:
             logging.info(f"Using API base: {api_base}")
             response_obj = completion(
@@ -150,6 +154,11 @@ async def handle_completion(
                 model=model_name,
                 messages=[{"content": message, "role": "user"}],
             )
+
+        # Calculate and add the response time to the usage field
+        end_time = time.time()
+        response_obj.usage.response_time = (end_time - start_time) * 1000 # in milliseconds
+
         return response_obj
     except OpenAIError as e:
         logging.error(f"Error during completion: {e}")

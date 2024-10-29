@@ -14,7 +14,7 @@ logging.basicConfig(level=logging.INFO)
 
 # Default server port.
 MODEL_IDS: list[str] = [
-    "llama3:8b",
+    "llama3",
     "llama3.2",
     "mistral",
     "gemma2",

@@ -199,8 +199,25 @@ async def handle_completion(
         
         return response_obj
     except OpenAIError as e:
-        logging.error(f"Error during completion: {e}")
-        raise HTTPException(status_code=500, detail="Error during completion")
+        error_msg = str(e)
+        logging.error(f"Error during completion: {error_msg}")
+        raise HTTPException(
+            status_code=500, 
+            detail={
+                "error": "Error during completion",
+                "message": error_msg
+            }
+        )
+    except Exception as e:
+        error_msg = str(e)
+        logging.error(f"Unexpected error during completion: {error_msg}")
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": "Unexpected error during completion",
+                "message": error_msg
+            }
+        )
 
 
 @web_app.post(

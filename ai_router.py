@@ -86,9 +86,43 @@ class Usage(BaseModel):
     completion_tokens: int
     prompt_tokens: int
     total_tokens: int
-    completion_tokens_details: Optional[dict] = None
-    prompt_tokens_details: Optional[dict] = None
-    response_time: float  # New field for response time in milliseconds
+    completion_tokens_details: Optional[dict] = Field(default=None, description="Details about completion tokens")
+    prompt_tokens_details: Optional[dict] = Field(default=None, description="Details about prompt tokens") 
+    response_time: float
+
+    @staticmethod
+    def _to_dict(obj):
+        """Safely convert an object to a dictionary."""
+        if obj is None:
+            return None
+        try:
+            return vars(obj)
+        except TypeError:
+            # If object doesn't have __dict__, try to convert it to dict directly
+            try:
+                return dict(obj)
+            except (TypeError, ValueError):
+                # If conversion fails, return None instead of failing
+                return None
+
+    @classmethod
+    def from_response(cls, response_obj):
+        # Safely convert wrapper objects to dictionaries
+        completion_details = cls._to_dict(
+            getattr(response_obj.usage, "completion_tokens_details", None)
+        )
+        prompt_details = cls._to_dict(
+            getattr(response_obj.usage, "prompt_tokens_details", None)
+        )
+        
+        return cls(
+            completion_tokens=response_obj.usage.completion_tokens,
+            prompt_tokens=response_obj.usage.prompt_tokens,
+            total_tokens=response_obj.usage.total_tokens,
+            completion_tokens_details=completion_details,
+            prompt_tokens_details=prompt_details,
+            response_time=response_obj.usage.response_time
+        )
 
 
 class ModelResponse(BaseModel):
@@ -104,8 +138,11 @@ class ModelResponse(BaseModel):
 class MessageRequest(BaseModel):
     model: str = Field(..., description="Name of the model to use.")
     message: str = Field(..., description="Message text to send to the model.")
-    api_key: Optional[str] = Field(
-        None, description="API key if required by the provider."
+    openai_api_key: Optional[str] = Field(
+        None, description="API key if required by the openai provider."
+    )
+    anthropic_api_key: Optional[str] = Field(
+        None, description="API key if required by the anthropic provider."
     )
 
 
@@ -138,9 +175,8 @@ def temporary_env_var(key: str, value: str):
 async def handle_completion(
     model_name: str, message: str, api_base: Optional[str] = None
 ):
-    """Handle the completion call and return the response."""
     try:
-        start_time = time.time()  # Start timer before calling completion
+        start_time = time.time()
 
         if api_base:
             logging.info(f"Using API base: {api_base}")
@@ -155,14 +191,33 @@ async def handle_completion(
                 messages=[{"content": message, "role": "user"}],
             )
 
-        # Calculate and add the response time to the usage field
         end_time = time.time()
-        response_obj.usage.response_time = (end_time - start_time) * 1000 # in milliseconds
+        response_obj.usage.response_time = (end_time - start_time) * 1000
 
+        # Convert the usage object
+        response_obj.usage = Usage.from_response(response_obj)
+        
         return response_obj
     except OpenAIError as e:
-        logging.error(f"Error during completion: {e}")
-        raise HTTPException(status_code=500, detail="Error during completion")
+        error_msg = str(e)
+        logging.error(f"Error during completion: {error_msg}")
+        raise HTTPException(
+            status_code=500, 
+            detail={
+                "error": "Error during completion",
+                "message": error_msg
+            }
+        )
+    except Exception as e:
+        error_msg = str(e)
+        logging.error(f"Unexpected error during completion: {error_msg}")
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": "Unexpected error during completion",
+                "message": error_msg
+            }
+        )
 
 
 @web_app.post(
@@ -181,47 +236,50 @@ async def messaging(request: MessageRequest):
     logging.info("Received /message request")
     model_name = request.model
     message = request.message
-    api_key = request.api_key
+    openai_api_key = request.openai_api_key
+    anthropic_api_key = request.anthropic_api_key
     logging.info(f"Model name: {model_name}")
     logging.info(f"Message: {message}")
 
     # Fetch models from Supabase
     models = await fetch_models_from_supabase()
 
-    # Check if the model is supported
+    # First check for OpenAI/Anthropic providers
+    openai_model = next((m for m in models if m["model_name"] == model_name and m["provider"] == "openai"), None)
+    if openai_model and openai_api_key:
+        logging.info("Using OpenAI provider")
+        with temporary_env_var("OPENAI_API_KEY", openai_api_key):
+            return await handle_completion(model_name, message)
+
+    anthropic_model = next((m for m in models if m["model_name"] == model_name and m["provider"] == "anthropic"), None)
+    if anthropic_model and anthropic_api_key:
+        logging.info("Using Anthropic provider")
+        with temporary_env_var("ANTHROPIC_API_KEY", anthropic_api_key):
+            return await handle_completion(model_name, message)
+
+    # Try GitHub as fallback
+    github_model = next((m for m in models if m["model_name"] == model_name and m["provider"] == "github"), None)
+    if github_model:
+        logging.info("Using GitHub provider")
+        model_name = f"github/{model_name}"
+        return await handle_completion(model_name, message)
+
+    # Try Ollama as final fallback
+    ollama_model = next((m for m in models if m["model_name"] == model_name and m["provider"] == "ollama"), None)
+    if ollama_model:
+        logging.info("Using Ollama provider")
+        model_name = f"ollama/{model_name}"
+        api_url = os.environ["OLLAMA_API_URL"]
+        return await handle_completion(model_name, message, api_base=api_url)
+
+    # If no provider found, check if it's an unsupported OpenAI/Anthropic model
     model_info = next((m for m in models if m["model_name"] == model_name), None)
     if not model_info:
-        logging.warning(f"Model {model_name} not supported")
         raise HTTPException(status_code=404, detail="Model not supported")
-
-    provider = model_info["provider"]
-    logging.info(f"Provider: {provider}")
-
-    if provider == "ollama":
-        model_name = f"ollama/{model_name}"
-        logging.info(f"Updated model name for Ollama: {model_name}")
-        api_url = os.environ["OLLAMA_API_URL"]
-        logging.info(f"API URL for Ollama: {api_url}")
-        response_obj = await handle_completion(model_name, message, api_base=api_url)
-    elif provider == "github":
-        model_name = f"github/{model_name}"
-        logging.info(f"Updated model name for GitHub: {model_name}")
-        response_obj = await handle_completion(model_name, message)
-    elif provider in ["openai", "anthropic"]:
-        if not api_key:
-            logging.info("No API key provided, defaulting to GitHub provider")
-            model_name = f"github/{model_name}"
-            logging.info(f"Updated model name for GitHub: {model_name}")
-            response_obj = await handle_completion(model_name, message)
-        else:
-            with temporary_env_var("API_KEY", api_key):
-                logging.info("Using API key for provider")
-                response_obj = await handle_completion(model_name, message)
+    elif model_info["provider"] in ["openai", "anthropic"]:
+        raise HTTPException(status_code=400, detail=f"API key required for {model_info['provider']} model")
     else:
-        logging.warning(f"Provider {provider} is not supported")
         raise HTTPException(status_code=400, detail="Provider not supported")
-
-    return response_obj
 
 
 @web_app.get(

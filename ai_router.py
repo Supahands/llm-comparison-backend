@@ -6,7 +6,6 @@ from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from contextlib import contextmanager
-from openai import OpenAIError
 from modal import Image, App, asgi_app, Secret
 
 # Configure logging
@@ -48,6 +47,7 @@ llm_compare_app = App(
 with llm_compare_app.image.imports():
     from litellm import completion
     from supabase import create_client, Client
+    from openai import OpenAIError
 
     # Initialize Supabase client
     supabase_url = os.environ["SUPABASE_URL"]

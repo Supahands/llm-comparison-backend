@@ -40,7 +40,8 @@ llm_compare_app = App(
     secrets=[
         Secret.from_name("SUPABASE_SECRETS"),
         Secret.from_name("OLLAMA_API"),
-        Secret.from_name("llm_comparison_github")
+        Secret.from_name("llm_comparison_github"),
+        Secret.from_name("my-huggingface-secret")
     ],
 )
 
@@ -262,6 +263,13 @@ async def messaging(request: MessageRequest):
     if github_model:
         logging.info("Using GitHub provider")
         model_name = f"github/{model_name}"
+        return await handle_completion(model_name, message)
+
+    # Try Hugging Face as fallback
+    huggingface_model = next((m for m in models if m["model_name"] == model_name and m["provider"] == "huggingface"), None)
+    if huggingface_model:
+        logging.info("Using Hugging Face provider")
+        model_name = f"huggingface/{model_name}"
         return await handle_completion(model_name, message)
 
     # Try Ollama as final fallback

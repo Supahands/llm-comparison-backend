@@ -20,6 +20,7 @@ MODEL_IDS: list[str] = [
     "gemma2",
     "qwen2.5",
     "aisingapore/gemma2-9b-cpt-sea-lionv3-instruct",
+    "hf.co/Supa-AI/malaysian-Llama-3.2-3B-Instruct-Q8_0-GGUF"
 ]
 
 OLLAMA_PORT: int = 11434

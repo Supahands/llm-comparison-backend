@@ -49,14 +49,6 @@ The `deploy.py` file acts as the main orchestrator, combining all application co
 
 The project includes a HuggingFace to GGUF converter (`hugging_face_to_guff.py`) that enables converting HuggingFace models to GGUF format using Modal's infrastructure.
 
-### Environment Variables
-
-Required environment variables:
-```sh
-HUGGING_FACE_HUB_TOKEN="your_hf_token"  # HuggingFace API token with read access
-```
-Add these to your `.env` file or Modal secrets.
-
 ### Setup
 1. Create a Modal secret for HuggingFace, either via the UI or the cli:
 ```sh

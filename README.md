@@ -70,7 +70,7 @@ modal serve --env dev deploy
 ```
 
 
-<iframe src="https://supa-dev--llm-comparison-api-fastapi-app.modal.run/docs" width="100%" height="800px" frameborder="0" style="border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);" title="LLM Comparison API Documentation"> </iframe> 
+
 
 
 <h2 id="converter">🔄 GGUF Converter</h2> <h3>Setup</h3>

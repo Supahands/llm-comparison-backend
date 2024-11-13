@@ -110,6 +110,12 @@ modal run --detach hugging_face_to_guff.py \
     1. FP16 format
     2. Quantization (Q4_K_M, Q5_K_M etc)
 
+<h2 id="disclaimer">⚠️ Disclaimer</h2>
+
+<p align="center">Currently, we do not support Anthropic models (Claude) on the official site due to API costs. We are actively seeking sponsors to help integrate these models. If you have suggestions for implementing Anthropic models or would like to contribute, please <a href="https://github.com/Supahands/llm-comparison-backend/issues/new">open an issue</a>!</p>
+
+<p align="center">We welcome any creative solutions or partnerships that could help bring Anthropic model support to this comparison platform.</p>
+
 ### Conversion Process 
 - Uses [llama.cpp](https://github.com/ggerganov/llama.cpp) for GGUF conversion
 - Two-step process:

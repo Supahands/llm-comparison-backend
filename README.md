@@ -1,62 +1,92 @@
-# llm-comparison-backend
-This is an opensource project allowing you to compare two LLM's head to head with a given prompt, this section will be regarding the backend of this project, allowing for llm api's to be incorporated and used in the front-end
+                     
+<h1 align="center" style="font-weight: bold;">LLM Comparison backend 💻</h1>
 
-# Project Deployment
+<p align="center">
+<a href="#tech">Technologies</a>
+<a href="#started">Getting Started</a>
+<a href="#deployment">Deployment</a> •
+<a href="#converter">GGUF Converter</a>
+<a href="#routes">API Endpoints</a>
+<a href="#colab">Collaborators</a>
+<a href="#contribute">Contribute</a> 
+</p>
 
-This project uses [Modal](https://modal.com/) to deploy Python applications as containerized services.
 
-## Automatic Deployment
+<p align="center">This is an opensource project allowing you to compare two LLM's head to head with a given prompt, this section will be regarding the backend of this project, allowing for llm api's to be incorporated and used in the front-end</p>
 
-The project includes CI/CD automation via GitHub Actions. When code is pushed to the `main` branch, the workflow in [.github/workflows/deploy.yml](.github/workflows/deploy.yml) automatically:
 
-1. Sets up Python 3.10
-2. Installs dependencies via Poetry
-3. Deploys the application using Modal
+<p align="center">
+<a href="https://github.com/Supahands/llm-comparison-backend">📱 Visit this Project</a>
+</p>
+ 
+<h2 id="technologies">💻 Technologies</h2>
 
-## Manual Deployment
-
-### Prerequisites
 - Python 3.10+
+- Modal serverless GPU's
 - Poetry for dependency management
-- Modal CLI and account
+- llama.cpp
+- HuggingFace Hub
+ 
+<h2 id="started">🚀 Getting started</h2>
 
-### Setup
-1. Install dependencies:
-```sh 
-poetry install
+The majority of this project will be run via <a href="https://modal.com/">Modal</a> services, meaning all of the building and dependency installation will be handled by that
+ 
+<h3>Prerequisites</h3>
+
+Here you list all prerequisites necessary for running your project. For example:
+
+- Python ^10.10
+- [Modal pip package](https://modal.com/docs/guide)
+- Poetry for dependency management
+ 
+<h3>Cloning</h3>
+
+How to clone your project
+
+```bash
+git clone https://github.com/Supahands/llm-comparison-backend.git
 ```
-2. Configure Modal credentials:
-- Copy .env.example to .env
-- Add your Modal tokens from the Modal dashboard
-### Deployment Commands
-- **Production Deploy**:
+ 
+<h3>Starting</h3>
+
+There are two components to this project, the `ollama` api server as well as the `litellm` server which will be what our frontend uses to connect to and retrieve different models from.
+
+I have added both the applications into a single deploy file which can be run to allow both apps to be spun up at the same time using:
+
+```bash
+modal deploy --env dev deploy
+```
+ 
+<h3>Manual Deployment</h3>
+
+**Production Deploy**:
 ```sh
 modal deploy --env dev deploy
 ```
 
-This command uses `deploy.py` as an entry point to bundle all application components into a single Modal deployment. The `deploy.py` file orchestrates the initialization and configuration of all microservices.
-
-- **Local Testing:**
+**Local Testing**:
 ```sh
 modal serve --env dev deploy
 ```
 
-This creates a temporary deployment for testing purposes. The service remains active only while the command is running, making it ideal for development and testing.
 
-The `deploy.py` file acts as the main orchestrator, combining all application components (like AI routing and Ollama services) into a unified Modal deployment. It handles the configuration and initialization of each service component within the Modal infrastructure. 
+<iframe src="https://supa-dev--llm-comparison-api-fastapi-app.modal.run/docs" width="100%" height="800px" frameborder="0" style="border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);" title="LLM Comparison API Documentation"> </iframe> 
 
-## HuggingFace to GGUF Converter
 
-The project includes a HuggingFace to GGUF converter (`hugging_face_to_guff.py`) that enables converting HuggingFace models to GGUF format using Modal's infrastructure.
+<h2 id="converter">🔄 GGUF Converter</h2> <h3>Setup</h3>
 
-### Setup
-1. Create a Modal secret for HuggingFace, either via the UI or the cli:
-```sh
+1. Create Modal secret:
+```sh 
 modal secret create my-huggingface-secret HUGGING_FACE_HUB_TOKEN="your_token"
 ```
-2. Run the modal file using:
+
+2. Run converter:
 ```sh
-modal run --detach hugging_face_to_guff.py --modelowner tencent --modelname Tencent-Hunyuan-Large --quanttype q8_0  --username Supa-AI
+modal run --detach hugging_face_to_guff.py \
+  --modelowner tencent \
+  --modelname Tencent-Hunyuan-Large \
+  --quanttype q8_0 \
+  --username Supa-AI
 ```
 - The `--detach` command is used to allow this program to run even if your terminal disconnects from the modal servers
 - `modelowner` is the repo owner that you are trying to get the model from
@@ -64,17 +94,21 @@ modal run --detach hugging_face_to_guff.py --modelowner tencent --modelname Tenc
 - `quanttype` is the size of quantization, default is `q8_0` which is the largest this supports 
 - `username` is used to determine which account it should upload to and create a repo for
 
-## Technical Details
-### Storage
-- Models are stored on Modal volumes (model-storage) which will be created for you on running this modal file
-- Large models (>10GB) may take significant time to download
-- Volumes persist between runs, and it should be able to detect which files it has downloaded previously to then either continue downloading or directly begin to prcess
+<h3>Technical Details</h3>
 
-### Key Components of this program
-### Fast downloads
-- Uses custom HuggingFace downloader from [booday](https://github.com/bodaay/HuggingFaceModelDownloader) 
-- Supports parallel downloads (8 connections)
-- Includes progress tracking and ETA estimation
+#### Storage
+
+- Uses Modal volumes (model-storage)
+- Persists between runs and should use existing models when running again (will continue downloads from what it has as well)
+- Supports large models (>10GB)
+
+### Features
+
+- Parallel downloads (8 connections) thanks to [booday's hugging face downloader](https://github.com/bodaay/HuggingFaceModelDownloader)
+- Progress tracking with ETA
+- Two-step conversion:
+    1. FP16 format
+    2. Quantization (Q4_K_M, Q5_K_M etc)
 
 ### Conversion Process 
 - Uses [llama.cpp](https://github.com/ggerganov/llama.cpp) for GGUF conversion
@@ -83,3 +117,36 @@ modal run --detach hugging_face_to_guff.py --modelowner tencent --modelname Tenc
     2. Quantize to desired format (Q4_K_M, Q5_K_M etc)
 - Supports importance matrix for optimized quantization
 - Can split large models into manageable shards
+ 
+<h2 id="colab">🤝 Collaborators</h2>
+
+<p>Special thank you for all people that contributed for this project.</p>
+<table>
+<tr>
+
+<td align="center">
+<a href="https://github.com/OriginalByteMe">
+<img src="https://avatars.githubusercontent.com/OriginalByteMe" width="100px;" alt="Noah Profile Picture"/><br>
+<sub>
+<b>Noah Rijkaard</b>
+</sub>
+</a>
+</td>
+
+</tr>
+</table>
+ 
+<h2 id="contribute">📫 Contribute</h2>
+
+Here you will explain how other developers can contribute to your project. For example, explaining how can create their branches, which patterns to follow and how to open an pull request
+
+1. `git clone https://github.com/Supahands/llm-comparison-backend`
+2. `git checkout -b feature/NAME`
+3. Follow commit patterns
+4. Open a Pull Request explaining the problem solved or feature made, if exists, append screenshot of visual modifications and wait for the review!
+ 
+<h3>Documentations that might help</h3>
+
+[📝 How to create a Pull Request](https://www.atlassian.com/br/git/tutorials/making-a-pull-request)
+
+[💾 Commit pattern](https://gist.github.com/joshbuchea/6f47e86d2510bce28f8e7f42ae84c716)

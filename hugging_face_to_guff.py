@@ -45,80 +45,89 @@ image = (
 )
 class ModelConverter:
     @method()
-    def download_model(self, model_id: str):
+    def download_model(self, model_id: str, max_retries: int = 3):
         logger.info(f"Downloading model {model_id}...")
         import subprocess
         import time
         import re
         from datetime import datetime, timedelta
 
-        try:
-            local_dir = f"/root/models/{model_id.split('/')[-1]}-hf"
-            os.makedirs(local_dir, exist_ok=True)
+        for attempt in range(max_retries):
+            try:
+                local_dir = f"/root/models/{model_id.split('/')[-1]}-hf"
+                os.makedirs(local_dir, exist_ok=True)
 
-            # Track download progress
-            last_progress = 0
-            last_time = time.time()
-            progress_pattern = r"Speed: ([\d.]+) MB/sec, ([\d.]+)%"
+                cmd = [
+                    "hfdownloader",
+                    "-m", model_id,
+                    "-s", local_dir,
+                    "-c", "4", # Number of concurrent downloads
+                    "-t", os.environ.get("HUGGING_FACE_HUB_TOKEN", "")
+                ]
 
-            cmd = [
-                "hfdownloader",
-                "-m", model_id,
-                "-s", local_dir,
-                "-c", "8",
-                "-t", os.environ.get("HUGGING_FACE_HUB_TOKEN", "")
-            ]
+                process = subprocess.Popen(
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    universal_newlines=True
+                )
 
-            process = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                universal_newlines=True
-            )
+                # Track download progress
+                last_progress = 0
+                last_time = time.time()
+                progress_pattern = r"Speed: ([\d.]+) MB/sec, ([\d.]+)%"
 
-            while process.poll() is None:
-                output = process.stdout.readline()
-                if output:
-                    # Extract speed and progress
-                    match = re.search(progress_pattern, output)
-                    if match:
-                        speed = float(match.group(1))
-                        progress = float(match.group(2))
-                        
-                        # Calculate ETA
-                        if progress > last_progress:
-                            time_diff = time.time() - last_time
-                            progress_diff = progress - last_progress
-                            time_per_percent = time_diff / progress_diff
-                            remaining_percent = 100 - progress
-                            eta_seconds = time_per_percent * remaining_percent
-                            eta = datetime.now() + timedelta(seconds=eta_seconds)
+                while process.poll() is None:
+                    output = process.stdout.readline()
+                    if output:
+                        # Extract speed and progress
+                        match = re.search(progress_pattern, output)
+                        if match:
+                            speed = float(match.group(1))
+                            progress = float(match.group(2))
                             
-                            # Update tracking variables
-                            last_progress = progress
-                            last_time = time.time()
-                            
-                            # Log with ETA
-                            logger.info(f"{output.strip()} | ETA: {eta.strftime('%H:%M:%S')}")
+                            # Calculate ETA
+                            if progress > last_progress:
+                                time_diff = time.time() - last_time
+                                progress_diff = progress - last_progress
+                                time_per_percent = time_diff / progress_diff
+                                remaining_percent = 100 - progress
+                                eta_seconds = time_per_percent * remaining_percent
+                                eta = datetime.now() + timedelta(seconds=eta_seconds)
+                                
+                                # Update tracking variables
+                                last_progress = progress
+                                last_time = time.time()
+                                
+                                # Log with ETA
+                                logger.info(f"{output.strip()} | ETA: {eta.strftime('%H:%M:%S')}")
+                            else:
+                                logger.info(output.strip())
                         else:
                             logger.info(output.strip())
+
+                    time.sleep(10)
+
+                if process.returncode == 0:
+                    logger.info(f"Model downloaded successfully on attempt {attempt + 1}")
+                    volume.commit()
+                    return local_dir
+                else:
+                    if attempt < max_retries - 1:
+                        wait_time = 2 ** attempt  # Exponential backoff
+                        logger.warning(f"Download failed, retrying in {wait_time} seconds...")
+                        time.sleep(wait_time)
                     else:
-                        logger.info(output.strip())
+                        raise Exception(f"Download failed after {max_retries} attempts")
 
-                time.sleep(10)
-
-            if process.returncode != 0:
-                raise Exception(f"Download failed with exit code {process.returncode}")
-
-            logger.info(f"Model downloaded to {local_dir}")
-            # Commit volume after download
-            volume.commit()
-            logger.info("Volume committed after download")
-            return local_dir
-
-        except Exception as e:
-            logger.error(f"Error downloading model: {str(e)}")
-            raise
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    wait_time = 2 ** attempt
+                    logger.warning(f"Error: {str(e)}, retrying in {wait_time} seconds...")
+                    time.sleep(wait_time)
+                else:
+                    logger.error(f"Final error downloading model: {str(e)}")
+                    raise
 
     @method()
     def convert_to_gguf(self, input_dir: str, model_name: str, quant_type: str = "Q4_K_M"):

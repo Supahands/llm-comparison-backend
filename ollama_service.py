@@ -28,19 +28,25 @@ OLLAMA_URL: str = f"http://localhost:{OLLAMA_PORT}"
 
 
 def _run_subprocess(cmd: list[str], block: bool = True) -> None:
-    if block:
-        subprocess.run(
-            cmd,
-            stdout=sys.stdout,
-            stderr=sys.stderr,
-            check=True,
-        )
-    else:
-        subprocess.Popen(
-            cmd,
-            stdout=sys.stdout,
-            stderr=sys.stderr,
-        )
+    try:
+        if block:
+            subprocess.run(
+                cmd,
+                stdout=sys.stdout,
+                stderr=sys.stderr,
+                check=True,
+                shell=True if os.name == 'nt' else False  # Use shell=True on Windows
+            )
+        else:
+            subprocess.Popen(
+                cmd,
+                stdout=sys.stdout,
+                stderr=sys.stderr,
+                shell=True if os.name == 'nt' else False
+            )
+    except FileNotFoundError:
+        logging.error(f"Command not found: {' '.join(cmd)}")
+        raise
 
 
 def _is_server_healthy() -> bool:

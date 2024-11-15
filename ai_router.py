@@ -49,6 +49,7 @@ with llm_compare_app.image.imports():
     from litellm import completion
     from supabase import create_client, Client
     from openai import OpenAIError
+    import re
 
     # Initialize Supabase client
     supabase_url = os.environ["SUPABASE_URL"]
@@ -158,6 +159,28 @@ async def fetch_models_from_supabase() -> List[dict]:
     logging.info(f"Fetched {len(response.data)} models")
     return response.data
 
+def censor_words(text):
+    list_1 = ["Qwen", "ChatGPT", "Claude", "Llama", "Gemma", "Mistral"]
+    list_2 = ["Alibaba Cloud", "OpenAI", "Anthropic", "Qwen", "Google", "Meta"]
+    list_3 = ["created by", "developed by"]
+    
+    bool_censor_list_2 = False
+    
+    for word in list_3:
+        if re.search(r"\b" + re.escape(word) + r"\b", text):
+            bool_censor_list_2 = True
+    
+    for word in list_1:
+        text = re.sub(r"\b" + re.escape(word) + r"\b", "CENSORED", text)
+        if re.search(r"\b" + re.escape(word) + r"\b", text):
+            bool_censor_list_2 = True
+            
+    if bool_censor_list_2:
+        for word in list_2:
+            text = re.sub(r"\b" + re.escape(word) + r"\b", "CENSORED", text)
+            
+    return text
+
 
 @contextmanager
 def temporary_env_var(key: str, value: str):
@@ -193,6 +216,9 @@ async def handle_completion(
             )
 
         end_time = time.time()
+        
+        logging.info(f"uncesored_words\n\n{response_obj.choices[0].message.content}\n\ncensored_words\n\n{censor_words(response_obj.choices[0].message.content)}")
+        
         response_obj.usage.response_time = (end_time - start_time) * 1000
 
         # Convert the usage object
@@ -229,7 +255,7 @@ async def handle_completion(
     responses={
         200: {"description": "Successful response with the model's reply."},
         400: {"description": "Bad Request. Model or message not provided."},
-        404: {"description": "Model not supported."},
+        404: {"description": "Model is not supported."},
         500: {"description": "Internal Server Error."},
     },
 )
@@ -277,7 +303,7 @@ async def messaging(request: MessageRequest):
     if ollama_model:
         logging.info("Using Ollama provider")
         model_name = f"ollama/{model_name}"
-        api_url = os.environ["OLLAMA_API_URL"]
+        api_url = "https://supa-dev--llm-comparison-api-ollama-api-dev.modal.run"
         return await handle_completion(model_name, message, api_base=api_url)
 
     # If no provider found, check if it's an unsupported OpenAI/Anthropic model

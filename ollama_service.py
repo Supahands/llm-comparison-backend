@@ -16,6 +16,7 @@ logging.basicConfig(level=logging.INFO)
 MODEL_IDS: list[str] = [
     "llama3",
     "llama3.2",
+    "llama3.2:1b",
     "mistral",
     "gemma2",
     "qwen2.5",

@@ -116,8 +116,8 @@ class ModelConverter:
             volume.commit()
             logger.info("Volume committed after download")
             
-            # Call convert_to_gguf with results
-            return self.convert_to_gguf(
+            # Call convert_to_gguf with .remote()
+            return self.convert_to_gguf.remote(
                 local_dir, 
                 modelname,
                 quanttype,
@@ -141,7 +141,7 @@ class ModelConverter:
                 logger.info(f"Quantized model already exists at {output_file}")
                 # Still proceed with upload since the file exists
                 output_repo = f"{username}/{modelname}-{quanttype}-gguf"
-                return self.upload_to_hf(
+                return self.upload_to_hf.remote(
                     output_file,
                     output_repo, 
                     source_model_id,
@@ -181,9 +181,9 @@ class ModelConverter:
             logger.info(f"Model converted and quantized to {output_file}")
             volume.commit()
             
-            # Call upload_to_hf with results
+            # Call upload_to_hf with .remote()
             output_repo = f"{username}/{modelname}-{quanttype}-gguf"
-            return self.upload_to_hf(
+            return self.upload_to_hf.remote(
                 output_file,
                 output_repo,
                 source_model_id,

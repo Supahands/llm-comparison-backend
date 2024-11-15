@@ -221,66 +221,55 @@ async def handle_completion(
         )
 
 
-@web_app.post(
-    "/message",
-    response_model=ModelResponse,
-    status_code=status.HTTP_200_OK,
-    summary="Send message to a model",
-    responses={
-        200: {"description": "Successful response with the model's reply."},
-        400: {"description": "Bad Request. Model or message not provided."},
-        404: {"description": "Model not supported."},
-        500: {"description": "Internal Server Error."},
-    },
-)
+@web_app.post("/message")
 async def messaging(request: MessageRequest):
     logging.info("Received /message request")
     model_name = request.model
     message = request.message
     openai_api_key = request.openai_api_key
     anthropic_api_key = request.anthropic_api_key
-    logging.info(f"Model name: {model_name}")
-    logging.info(f"Message: {message}")
+    logging.info(f"Requested model name: {model_name}")
 
     # Fetch models from Supabase
     models = await fetch_models_from_supabase()
 
-    # First check for OpenAI/Anthropic providers
+    # OpenAI provider check
     openai_model = next((m for m in models if m["model_name"] == model_name and m["provider"] == "openai"), None)
     if openai_model and openai_api_key:
-        logging.info("Using OpenAI provider")
+        logging.info(f"Using OpenAI provider with model_id: {openai_model['model_id']}")
         with temporary_env_var("OPENAI_API_KEY", openai_api_key):
-            return await handle_completion(model_name, message)
+            return await handle_completion(openai_model['model_id'], message)
 
+    # Anthropic provider check
     anthropic_model = next((m for m in models if m["model_name"] == model_name and m["provider"] == "anthropic"), None)
     if anthropic_model and anthropic_api_key:
-        logging.info("Using Anthropic provider")
+        logging.info(f"Using Anthropic provider with model_id: {anthropic_model['model_id']}")
         with temporary_env_var("ANTHROPIC_API_KEY", anthropic_api_key):
-            return await handle_completion(model_name, message)
+            return await handle_completion(anthropic_model['model_id'], message)
 
-    # Try GitHub as fallback
+    # GitHub provider check
     github_model = next((m for m in models if m["model_name"] == model_name and m["provider"] == "github"), None)
     if github_model:
-        logging.info("Using GitHub provider")
-        model_name = f"github/{model_name}"
-        return await handle_completion(model_name, message)
+        logging.info(f"Using GitHub provider with model_id: {github_model['model_id']}")
+        model_id = f"{github_model['model_id']}"
+        return await handle_completion(model_id, message)
 
-    # Try Hugging Face as fallback
+    # Hugging Face provider check
     huggingface_model = next((m for m in models if m["model_name"] == model_name and m["provider"] == "huggingface"), None)
     if huggingface_model:
-        logging.info("Using Hugging Face provider")
-        model_name = f"huggingface/{model_name}"
-        return await handle_completion(model_name, message)
+        logging.info(f"Using Hugging Face provider with model_id: {huggingface_model['model_id']}")
+        model_id = f"{huggingface_model['model_id']}"
+        return await handle_completion(model_id, message)
 
-    # Try Ollama as final fallback
+    # Ollama provider check
     ollama_model = next((m for m in models if m["model_name"] == model_name and m["provider"] == "ollama"), None)
     if ollama_model:
-        logging.info("Using Ollama provider")
-        model_name = f"ollama/{model_name}"
+        logging.info(f"Using Ollama provider with model_id: {ollama_model['model_id']}")
+        model_id = f"ollama/{ollama_model['model_id']}"
         api_url = os.environ["OLLAMA_API_URL"]
-        return await handle_completion(model_name, message, api_base=api_url)
+        return await handle_completion(model_id, message, api_base=api_url)
 
-    # If no provider found, check if it's an unsupported OpenAI/Anthropic model
+    # Error handling
     model_info = next((m for m in models if m["model_name"] == model_name), None)
     if not model_info:
         raise HTTPException(status_code=404, detail="Model not supported")

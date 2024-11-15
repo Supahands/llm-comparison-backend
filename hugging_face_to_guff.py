@@ -45,95 +45,110 @@ image = (
 )
 class ModelConverter:
     @method()
-    def download_model(self, model_id: str, max_retries: int = 3):
+    def download_model(self, model_id: str, modelname: str, username: str, quanttype: str = "q8_0", private: bool = False):
         logger.info(f"Downloading model {model_id}...")
         import subprocess
         import time
         import re
         from datetime import datetime, timedelta
 
-        for attempt in range(max_retries):
-            try:
-                local_dir = f"/root/models/{model_id.split('/')[-1]}-hf"
-                os.makedirs(local_dir, exist_ok=True)
+        try:
+            local_dir = f"/root/models/{model_id.split('/')[-1]}-hf"
+            os.makedirs(local_dir, exist_ok=True)
 
-                cmd = [
-                    "hfdownloader",
-                    "-m", model_id,
-                    "-s", local_dir,
-                    "-c", "4", # Number of concurrent downloads
-                    "-t", os.environ.get("HUGGING_FACE_HUB_TOKEN", "")
-                ]
+            # Track download progress
+            last_progress = 0
+            last_time = time.time()
+            progress_pattern = r"Speed: ([\d.]+) MB/sec, ([\d.]+)%"
 
-                process = subprocess.Popen(
-                    cmd,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    universal_newlines=True
-                )
+            cmd = [
+                "hfdownloader",
+                "-m", model_id,
+                "-s", local_dir,
+                "-k",       
+                "-c", "8",
+                "-t", os.environ.get("HUGGING_FACE_HUB_TOKEN", "")
+            ]
 
-                # Track download progress
-                last_progress = 0
-                last_time = time.time()
-                progress_pattern = r"Speed: ([\d.]+) MB/sec, ([\d.]+)%"
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                universal_newlines=True
+            )
 
-                while process.poll() is None:
-                    output = process.stdout.readline()
-                    if output:
-                        # Extract speed and progress
-                        match = re.search(progress_pattern, output)
-                        if match:
-                            speed = float(match.group(1))
-                            progress = float(match.group(2))
+            while process.poll() is None:
+                output = process.stdout.readline()
+                if output:
+                    # Extract speed and progress
+                    match = re.search(progress_pattern, output)
+                    if match:
+                        speed = float(match.group(1))
+                        progress = float(match.group(2))
+                        
+                        # Calculate ETA
+                        if progress > last_progress:
+                            time_diff = time.time() - last_time
+                            progress_diff = progress - last_progress
+                            time_per_percent = time_diff / progress_diff
+                            remaining_percent = 100 - progress
+                            eta_seconds = time_per_percent * remaining_percent
+                            eta = datetime.now() + timedelta(seconds=eta_seconds)
                             
-                            # Calculate ETA
-                            if progress > last_progress:
-                                time_diff = time.time() - last_time
-                                progress_diff = progress - last_progress
-                                time_per_percent = time_diff / progress_diff
-                                remaining_percent = 100 - progress
-                                eta_seconds = time_per_percent * remaining_percent
-                                eta = datetime.now() + timedelta(seconds=eta_seconds)
-                                
-                                # Update tracking variables
-                                last_progress = progress
-                                last_time = time.time()
-                                
-                                # Log with ETA
-                                logger.info(f"{output.strip()} | ETA: {eta.strftime('%H:%M:%S')}")
-                            else:
-                                logger.info(output.strip())
+                            # Update tracking variables
+                            last_progress = progress
+                            last_time = time.time()
+                            
+                            # Log with ETA
+                            logger.info(f"{output.strip()} | ETA: {eta.strftime('%H:%M:%S')}")
                         else:
                             logger.info(output.strip())
-
-                    time.sleep(10)
-
-                if process.returncode == 0:
-                    logger.info(f"Model downloaded successfully on attempt {attempt + 1}")
-                    volume.commit()
-                    return local_dir
-                else:
-                    if attempt < max_retries - 1:
-                        wait_time = 2 ** attempt  # Exponential backoff
-                        logger.warning(f"Download failed, retrying in {wait_time} seconds...")
-                        time.sleep(wait_time)
                     else:
-                        raise Exception(f"Download failed after {max_retries} attempts")
+                        logger.info(output.strip())
 
-            except Exception as e:
-                if attempt < max_retries - 1:
-                    wait_time = 2 ** attempt
-                    logger.warning(f"Error: {str(e)}, retrying in {wait_time} seconds...")
-                    time.sleep(wait_time)
-                else:
-                    logger.error(f"Final error downloading model: {str(e)}")
-                    raise
+                time.sleep(10)
+
+            if process.returncode != 0:
+                raise Exception(f"Download failed with exit code {process.returncode}")
+
+            logger.info(f"Model downloaded to {local_dir}")
+            # Commit volume after download
+            volume.commit()
+            logger.info("Volume committed after download")
+            
+            # Call convert_to_gguf with results
+            return self.convert_to_gguf(
+                local_dir, 
+                modelname,
+                quanttype,
+                model_id,
+                username,
+                private
+            )
+
+        except Exception as e:
+            logger.error(f"Error downloading model: {str(e)}")
+            raise
 
     @method()
-    def convert_to_gguf(self, input_dir: str, model_name: str, quant_type: str = "Q4_K_M"):
-        logger.info(f"Converting model to GGUF format with quantization {quant_type}...")
+    def convert_to_gguf(self, input_dir: str, modelname: str, quanttype: str, source_model_id: str, username: str, private: bool):
+        logger.info(f"Converting model to GGUF format with quantization {quanttype}...")
         
         try:
+            # Check if quantized model already exists
+            output_file = f"/root/models/{modelname}.{quanttype.lower()}.gguf"
+            if os.path.exists(output_file):
+                logger.info(f"Quantized model already exists at {output_file}")
+                # Still proceed with upload since the file exists
+                output_repo = f"{username}/{modelname}-{quanttype}-gguf"
+                return self.upload_to_hf(
+                    output_file,
+                    output_repo, 
+                    source_model_id,
+                    quanttype,
+                    private
+                )
+                
             # Find the actual model directory containing config.json
             model_subdir = None
             for root, dirs, files in os.walk(input_dir):
@@ -147,7 +162,7 @@ class ModelConverter:
             logger.info(f"Found model files in: {model_subdir}")
             
             # First convert to f16
-            fp16_path = f"/root/models/{model_name}.f16.gguf"
+            fp16_path = f"/root/models/{modelname}.f16.gguf"
             logger.info("Converting to fp16 first...")
             
             cmd = f"python /root/llama.cpp/convert_hf_to_gguf.py {model_subdir} --outfile {fp16_path} --outtype f16"
@@ -156,17 +171,25 @@ class ModelConverter:
                 raise Exception(f"FP16 conversion failed with code {result}")
                 
             # Then quantize
-            output_file = f"/root/models/{model_name}.{quant_type.lower()}.gguf"
-            logger.info(f"Quantizing to {quant_type}...")
+            logger.info(f"Quantizing to {quanttype}...")
             
-            cmd = f"/root/llama.cpp/llama-quantize {fp16_path} {output_file} {quant_type}"
+            cmd = f"/root/llama.cpp/llama-quantize {fp16_path} {output_file} {quanttype}"
             result = os.system(cmd)
             if result != 0:
                 raise Exception(f"Quantization failed with code {result}")
                 
             logger.info(f"Model converted and quantized to {output_file}")
             volume.commit()
-            return output_file
+            
+            # Call upload_to_hf with results
+            output_repo = f"{username}/{modelname}-{quanttype}-gguf"
+            return self.upload_to_hf(
+                output_file,
+                output_repo,
+                source_model_id,
+                quanttype,
+                private
+            )
             
         except Exception as e:
             logger.error(f"Error in conversion/quantization: {str(e)}")
@@ -283,25 +306,15 @@ def main(modelowner: str, modelname: str, username: str, quanttype: str = "q8_0"
     converter = ModelConverter()
     
     try:
-        # Build proper model IDs
+        # Only need to call download_model - it will chain the rest
         model_id = f"{modelowner}/{modelname}"
-        output_repo = f"{username}/{modelname}-{quanttype}-gguf"
-        
-        # Run conversion pipeline
-        local_dir = converter.download_model.remote(model_id)
-        gguf_path = converter.convert_to_gguf.remote(
-            local_dir,
-            model_name=modelname,
-            quant_type=quanttype    
+        converter.download_model.remote(
+            model_id,
+            modelname,
+            username,
+            quanttype,
+            private
         )
-        converter.upload_to_hf.remote(
-            gguf_path,
-            output_repo,
-            source_model_id=model_id,
-            quant_type=quanttype,
-            private=private
-        )
-        
         logger.info("Conversion process completed successfully")
     except Exception as e:
         logger.error(f"Conversion process failed: {str(e)}")

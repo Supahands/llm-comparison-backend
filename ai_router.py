@@ -221,7 +221,18 @@ async def handle_completion(
         )
 
 
-@web_app.post("/message")
+@web_app.post(
+    "/message",
+    response_model=ModelResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Send message to a model",
+    responses={
+        200: {"description": "Successful response with the model's reply."},
+        400: {"description": "Bad Request. Model or message not provided."},
+        404: {"description": "Model not supported."},
+        500: {"description": "Internal Server Error."},
+    },
+)
 async def messaging(request: MessageRequest):
     logging.info("Received /message request")
     model_name = request.model
@@ -229,7 +240,7 @@ async def messaging(request: MessageRequest):
     openai_api_key = request.openai_api_key
     anthropic_api_key = request.anthropic_api_key
     logging.info(f"Requested model name: {model_name}")
-
+    logging.info(f"Message: {message}")
     # Fetch models from Supabase
     models = await fetch_models_from_supabase()
 

@@ -88,17 +88,17 @@ def update_model_db():
 
     existing_models = response.data
 
-    existing_model_names = {model["model_name"] for model in existing_models}
+    existing_model_ids = {model["model_id"] for model in existing_models}
     model_ids_set = set(MODEL_IDS)
 
     # Models to add
-    models_to_add = model_ids_set - existing_model_names
+    models_to_add = model_ids_set - existing_model_ids
     # Models to remove
-    models_to_remove = existing_model_names - model_ids_set
+    models_to_remove = existing_model_ids - model_ids_set
 
     # Add new models
     for model_name in models_to_add:
-        data = {"provider": "ollama", "model_name": model_name}
+        data = {"provider": "ollama", "model_id": model_name, "model_name": model_name}
         print(f"Adding model to DB: {data}")
         insert_response = supabase.table("available_models").insert(data).execute()
         logging.info(f"Added model to DB: {insert_response.data}")
@@ -110,7 +110,7 @@ def update_model_db():
             supabase.table("available_models")
             .delete()
             .eq("provider", "ollama")
-            .eq("model_name", model_name)
+            .eq("model_id", model_name)
             .execute()
         )
         logging.info(f"Removed model from DB: {delete_response.data}")

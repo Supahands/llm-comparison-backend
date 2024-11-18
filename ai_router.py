@@ -6,7 +6,7 @@ from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from contextlib import contextmanager
-from modal import Image, App, asgi_app, Secret
+from modal import Image, App, asgi_app, Secret, gpu
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -32,7 +32,15 @@ web_app.add_middleware(
 )
 
 image = Image.debian_slim().pip_install(
-    ["litellm", "supabase", "pydantic==2.5.3", "fastapi==0.109.0", "openai"]
+    [
+        "litellm", 
+        "supabase", 
+        "pydantic==2.5.3", 
+        "fastapi==0.109.0", 
+        "openai", 
+        "sentence-transformers", 
+        "xformers"
+    ]
 )
 llm_compare_app = App(
     name="llm-compare-api",
@@ -50,12 +58,13 @@ with llm_compare_app.image.imports():
     from supabase import create_client, Client
     from openai import OpenAIError
     import re
+    from sentence_transformers import SentenceTransformer
 
     # Initialize Supabase client
+    sentence_model = SentenceTransformer("dunzhang/stella_en_400M_v5", trust_remote_code=True, device="cuda")
     supabase_url = os.environ["SUPABASE_URL"]
     supabase_key = os.environ["SUPABASE_KEY"]
     supabase: Client = create_client(supabase_url, supabase_key)
-
 
 # Pydantic models
 class FunctionCall(BaseModel):
@@ -162,24 +171,23 @@ async def fetch_models_from_supabase() -> List[dict]:
 def censor_words(text):
     list_1 = ["Qwen", "ChatGPT", "Claude", "Llama", "Gemma", "Mistral"]
     list_2 = ["Alibaba Cloud", "OpenAI", "Anthropic", "Qwen", "Google", "Meta"]
-    list_3 = ["created by", "developed by"]
-    
-    bool_censor_list_2 = False
-    
-    for word in list_3:
-        if re.search(r"\b" + re.escape(word) + r"\b", text):
-            bool_censor_list_2 = True
     
     for word in list_1:
         text = re.sub(r"\b" + re.escape(word) + r"\b", "CENSORED", text)
-        if re.search(r"\b" + re.escape(word) + r"\b", text):
-            bool_censor_list_2 = True
             
-    if bool_censor_list_2:
-        for word in list_2:
-            text = re.sub(r"\b" + re.escape(word) + r"\b", "CENSORED", text)
+    for word in list_2:
+        text = re.sub(r"\b" + re.escape(word) + r"\b", "CENSORED", text)
             
     return text
+
+def get_similarity_score(docs):
+    query = "I am a artificial intelligence (AI) assistant created by a certain company."
+    query_embeddings = sentence_model.encode(query)
+    docs_embeddings = sentence_model.encode(docs)
+    
+    similarity = sentence_model.similarity(query_embeddings, docs_embeddings)
+    
+    return similarity
 
 
 @contextmanager
@@ -217,7 +225,13 @@ async def handle_completion(
 
         end_time = time.time()
         
-        logging.info(f"uncesored_words\n\n{response_obj.choices[0].message.content}\n\ncensored_words\n\n{censor_words(response_obj.choices[0].message.content)}")
+        similarity_score = get_similarity_score(response_obj.choices[0].message.content)
+        
+        logging.info(f"\nuncesored_words\n\n{response_obj.choices[0].message.content}\n")
+        logging.info(f"similarity_score:{similarity_score[0][0]}")
+        
+        if (similarity_score[0][0] > 0.5):
+           logging.info(f"\ncensored words\n\n{censor_words(response_obj.choices[0].message.content)}")
         
         response_obj.usage.response_time = (end_time - start_time) * 1000
 
@@ -332,8 +346,10 @@ async def list_models():
     logging.info(f"Returning {len(models)} models")
     return models
 
+@llm_compare_app.function(
+    gpu=gpu.T4(count=1), allow_concurrent_inputs=10, concurrency_limit=1
+)
 
-@llm_compare_app.function()
 @asgi_app()
 def fastapi_app():
     logging.info("Starting FastAPI app")

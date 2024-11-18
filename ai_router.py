@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from contextlib import contextmanager
 from modal import Image, App, asgi_app, Secret, gpu
+from const import LIST_OF_REDACTED_WORDS
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -38,8 +39,6 @@ image = Image.debian_slim().pip_install(
         "pydantic==2.5.3", 
         "fastapi==0.109.0", 
         "openai", 
-        "sentence-transformers", 
-        "xformers"
     ]
 )
 llm_compare_app = App(
@@ -58,10 +57,8 @@ with llm_compare_app.image.imports():
     from supabase import create_client, Client
     from openai import OpenAIError
     import re
-    from sentence_transformers import SentenceTransformer
 
     # Initialize Supabase client
-    sentence_model = SentenceTransformer("dunzhang/stella_en_400M_v5", trust_remote_code=True, device="cuda")
     supabase_url = os.environ["SUPABASE_URL"]
     supabase_key = os.environ["SUPABASE_KEY"]
     supabase: Client = create_client(supabase_url, supabase_key)
@@ -168,27 +165,6 @@ async def fetch_models_from_supabase() -> List[dict]:
     logging.info(f"Fetched {len(response.data)} models")
     return response.data
 
-def censor_words(text):
-    list_1 = ["Qwen", "ChatGPT", "Claude", "Llama", "Gemma", "Mistral"]
-    list_2 = ["Alibaba Cloud", "OpenAI", "Anthropic", "Qwen", "Google", "Meta"]
-    
-    for word in list_1:
-        text = re.sub(r"\b" + re.escape(word) + r"\b", "CENSORED", text)
-            
-    for word in list_2:
-        text = re.sub(r"\b" + re.escape(word) + r"\b", "CENSORED", text)
-            
-    return text
-
-def get_similarity_score(docs):
-    query = "I am a artificial intelligence (AI) assistant created by a certain company."
-    query_embeddings = sentence_model.encode(query)
-    docs_embeddings = sentence_model.encode(docs)
-    
-    similarity = sentence_model.similarity(query_embeddings, docs_embeddings)
-    
-    return similarity
-
 
 @contextmanager
 def temporary_env_var(key: str, value: str):
@@ -202,7 +178,21 @@ def temporary_env_var(key: str, value: str):
             del os.environ[key]
         else:
             os.environ[key] = original_value
-
+            
+def get_redacted_words(model_name):
+    for key in LIST_OF_REDACTED_WORDS:
+        if key in model_name:  # Check if the key is a substring of input_string
+            return LIST_OF_REDACTED_WORDS[key]
+    return None       
+        
+def redact_words(model_name, text):
+    
+    redacted_words = get_redacted_words(model_name)
+    
+    for word in redacted_words:
+        text = re.sub(rf"(?i)\b{re.escape(word)}\b", r"<redacted>\g<0></redacted>", text)
+            
+    return text
 
 async def handle_completion(
     model_name: str, message: str, api_base: Optional[str] = None
@@ -225,14 +215,7 @@ async def handle_completion(
 
         end_time = time.time()
         
-        similarity_score = get_similarity_score(response_obj.choices[0].message.content)
-        
-        logging.info(f"\nuncesored_words\n\n{response_obj.choices[0].message.content}\n")
-        logging.info(f"similarity_score:{similarity_score[0][0]}")
-        
-        if (similarity_score[0][0] > 0.5):
-           logging.info(f"\ncensored words\n\n{censor_words(response_obj.choices[0].message.content)}")
-        
+        logging.info(f"\ncensored_words\n\n{redact_words(model_name, response_obj.choices[0].message.content)}")
         response_obj.usage.response_time = (end_time - start_time) * 1000
 
         # Convert the usage object
@@ -279,48 +262,48 @@ async def messaging(request: MessageRequest):
     message = request.message
     openai_api_key = request.openai_api_key
     anthropic_api_key = request.anthropic_api_key
-    logging.info(f"Model name: {model_name}")
+    logging.info(f"Requested model name: {model_name}")
     logging.info(f"Message: {message}")
-
     # Fetch models from Supabase
     models = await fetch_models_from_supabase()
 
-    # First check for OpenAI/Anthropic providers
+    # OpenAI provider check
     openai_model = next((m for m in models if m["model_name"] == model_name and m["provider"] == "openai"), None)
     if openai_model and openai_api_key:
-        logging.info("Using OpenAI provider")
+        logging.info(f"Using OpenAI provider with model_id: {openai_model['model_id']}")
         with temporary_env_var("OPENAI_API_KEY", openai_api_key):
-            return await handle_completion(model_name, message)
+            return await handle_completion(openai_model['model_id'], message)
 
+    # Anthropic provider check
     anthropic_model = next((m for m in models if m["model_name"] == model_name and m["provider"] == "anthropic"), None)
     if anthropic_model and anthropic_api_key:
-        logging.info("Using Anthropic provider")
+        logging.info(f"Using Anthropic provider with model_id: {anthropic_model['model_id']}")
         with temporary_env_var("ANTHROPIC_API_KEY", anthropic_api_key):
-            return await handle_completion(model_name, message)
+            return await handle_completion(anthropic_model['model_id'], message)
 
-    # Try GitHub as fallback
+    # GitHub provider check
     github_model = next((m for m in models if m["model_name"] == model_name and m["provider"] == "github"), None)
     if github_model:
-        logging.info("Using GitHub provider")
-        model_name = f"github/{model_name}"
-        return await handle_completion(model_name, message)
+        logging.info(f"Using GitHub provider with model_id: {github_model['model_id']}")
+        model_id = f"{github_model['model_id']}"
+        return await handle_completion(model_id, message)
 
-    # Try Hugging Face as fallback
+    # Hugging Face provider check
     huggingface_model = next((m for m in models if m["model_name"] == model_name and m["provider"] == "huggingface"), None)
     if huggingface_model:
-        logging.info("Using Hugging Face provider")
-        model_name = f"huggingface/{model_name}"
-        return await handle_completion(model_name, message)
+        logging.info(f"Using Hugging Face provider with model_id: {huggingface_model['model_id']}")
+        model_id = f"{huggingface_model['model_id']}"
+        return await handle_completion(model_id, message)
 
-    # Try Ollama as final fallback
+    # Ollama provider check
     ollama_model = next((m for m in models if m["model_name"] == model_name and m["provider"] == "ollama"), None)
     if ollama_model:
-        logging.info("Using Ollama provider")
-        model_name = f"ollama/{model_name}"
+        logging.info(f"Using Ollama provider with model_id: {ollama_model['model_id']}")
+        model_id = f"ollama/{ollama_model['model_id']}"
         api_url = "https://supa-dev--llm-comparison-api-ollama-api-dev.modal.run"
-        return await handle_completion(model_name, message, api_base=api_url)
+        return await handle_completion(model_id, message, api_base=api_url)
 
-    # If no provider found, check if it's an unsupported OpenAI/Anthropic model
+    # Error handling
     model_info = next((m for m in models if m["model_name"] == model_name), None)
     if not model_info:
         raise HTTPException(status_code=404, detail="Model not supported")
@@ -346,10 +329,8 @@ async def list_models():
     logging.info(f"Returning {len(models)} models")
     return models
 
-@llm_compare_app.function(
-    gpu=gpu.T4(count=1), allow_concurrent_inputs=10, concurrency_limit=1
-)
 
+@llm_compare_app.function()
 @asgi_app()
 def fastapi_app():
     logging.info("Starting FastAPI app")

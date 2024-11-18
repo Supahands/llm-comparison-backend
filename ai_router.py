@@ -206,9 +206,9 @@ async def handle_completion(
 
         end_time = time.time()
         
-        logging.info(f"\ncensored_words\n\n{redact_words(model_name, response_obj.choices[0].message.content)}")
         response_obj.usage.response_time = (end_time - start_time) * 1000
-
+        
+        response_obj.choices[0].message.content = redact_words(model_name, response_obj.choices[0].message.content)
         # Convert the usage object
         response_obj.usage = Usage.from_response(response_obj)
         

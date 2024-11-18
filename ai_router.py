@@ -178,18 +178,9 @@ def temporary_env_var(key: str, value: str):
             del os.environ[key]
         else:
             os.environ[key] = original_value
-            
-def get_redacted_words(model_name):
-    for key in LIST_OF_REDACTED_WORDS:
-        if key in model_name:  # Check if the key is a substring of input_string
-            return LIST_OF_REDACTED_WORDS[key]
-    return None       
         
 def redact_words(model_name, text):
-    
-    redacted_words = get_redacted_words(model_name)
-    
-    for word in redacted_words:
+    for word in LIST_OF_REDACTED_WORDS:
         text = re.sub(rf"(?i)\b{re.escape(word)}\b", r"<redacted>\g<0></redacted>", text)
             
     return text

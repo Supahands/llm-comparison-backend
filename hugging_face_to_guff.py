@@ -58,7 +58,7 @@ image = (
 )
 class ModelConverter:
     @method()
-    def download_model(self, model_id: str, modelname: str, username: str, quanttype: str = "q8_0", private: bool = False):
+    def download_model(self, model_id: str, modelname: str, username: str, branch: str = "", filter_path: str = "", quanttypes: Union[str, List[str]] = "q8_0", private: bool = False):
         logger.info(f"Downloading model {model_id}...")
         import subprocess
         import time
@@ -69,19 +69,29 @@ class ModelConverter:
             local_dir = f"/root/models/{model_id.split('/')[-1]}-hf"
             os.makedirs(local_dir, exist_ok=True)
 
-            # Track download progress
-            last_progress = 0
-            last_time = time.time()
-            progress_pattern = r"Speed: ([\d.]+) MB/sec, ([\d.]+)%"
-
             cmd = [
                 "hfdownloader",
                 "-m", model_id,
                 "-s", local_dir,
                 "-k",       
-                "-c", "5",
-                "-t", os.environ.get("HUGGING_FACE_HUB_TOKEN", "")
+                "-c", "8",
             ]
+
+            # Add branch if specified
+            if branch:
+                cmd.extend(["-b", branch])
+                
+            # Add filter if specified
+            if filter_path:
+                cmd.extend(["-f", filter_path])
+
+            # Add token at the end
+            cmd.extend(["-t", os.environ.get("HUGGING_FACE_HUB_TOKEN", "")])
+
+            # Track download progress
+            last_progress = 0
+            last_time = time.time()
+            progress_pattern = r"Speed: ([\d.]+) MB/sec, ([\d.]+)%"
 
             process = subprocess.Popen(
                 cmd,
@@ -133,10 +143,12 @@ class ModelConverter:
             return self.convert_to_gguf.remote(
                 local_dir, 
                 modelname,
-                quanttype,
+                quanttypes,
                 model_id,
                 username,
-                private
+                private,
+                branch,  # Pass branch name to convert_to_gguf
+                filter_path  # Pass filter_path to convert_to_gguf
             )
 
         except Exception as e:
@@ -144,17 +156,24 @@ class ModelConverter:
             raise
 
     @method()
-    def convert_to_gguf(self, input_dir: str, modelname: str, quanttypes: Union[str, List[str]], source_model_id: str, username: str, private: bool):
-        """
-        Convert model to GGUF format with multiple quantization types
-        """
+    def convert_to_gguf(self, input_dir: str, modelname: str, quanttypes: Union[str, List[str]], source_model_id: str, username: str, private: bool, branch: str = "", filter_path: str = ""):
+        """Convert model to GGUF format with multiple quantization types"""
         logger.info(f"Converting model with quantization types: {quanttypes}")
         
-        # Handle single string input
+        # Create repo name based on modelname, branch and filter if specified
+        repo_base_name = modelname
+        if branch:
+            repo_base_name = f"{repo_base_name}-{branch}"
+        if filter_path:
+            clean_filter = filter_path.replace('/', '-').replace('_', '-').strip('-')
+            repo_base_name = f"{repo_base_name}-{clean_filter}"
+        
+        # Create single repository name for all quantization versions
+        output_repo = f"{username}/{repo_base_name}-gguf"
+        
         if isinstance(quanttypes, str):
             quanttypes = [quanttypes]
         
-        # Use all supported types if none specified
         if not quanttypes:
             quanttypes = SUPPORTED_QUANT_TYPES
             
@@ -181,7 +200,7 @@ class ModelConverter:
                     raise Exception(f"FP16 conversion failed with code {result}")
             
             # Process each quantization type
-            upload_futures = []
+            model_files = []
             for quanttype in quanttypes:
                 try:
                     output_file = f"/root/models/{modelname}.{quanttype.lower()}.gguf"
@@ -201,24 +220,19 @@ class ModelConverter:
                         logger.info(f"Model converted and quantized to {output_file}")
                         volume.commit()
                     
-                    # Upload each version
-                    output_repo = f"{username}/{modelname}-{quanttype}-gguf"
-                    future = self.upload_to_hf.remote(
-                        output_file,
-                        output_repo,
-                        source_model_id, 
-                        quanttype,
-                        private
-                    )
-                    upload_futures.append(future)
+                    model_files.append((output_file, quanttype))
                     
                 except Exception as e:
                     logger.error(f"Error processing {quanttype}: {str(e)}")
                     continue
-                    
-            # Wait for all uploads to complete
-            results = [f.get() for f in upload_futures]
-            return results
+        
+            # Upload all versions to the same repository
+            return self.upload_to_hf.remote(
+                model_files,
+                output_repo,
+                source_model_id,
+                private
+            )
                 
         except Exception as e:
             logger.error(f"Error in conversion/quantization: {str(e)}")
@@ -245,21 +259,18 @@ class ModelConverter:
             raise
 
     @method()
-    def upload_to_hf(self, file_path: str, repo_id: str, source_model_id: str, quant_type: str, private: bool = False):
+    def upload_to_hf(self, model_files: List[tuple], repo_id: str, source_model_id: str, private: bool = False):
         logger.info("Reloading volume before upload...")
         volume.reload()
         
-        logger.info(f"Uploading GGUF model to HuggingFace repo {repo_id}...")
+        logger.info(f"Uploading GGUF models to HuggingFace repo {repo_id}...")
         from huggingface_hub import HfApi, ModelCard
         from textwrap import dedent
         
         try:
             api = HfApi()
-            
-            # Create repo first
             api.create_repo(repo_id, exist_ok=True, private=private, repo_type="model")
             
-            # Generate model card
             try:
                 card = ModelCard.load(source_model_id)
             except Exception:
@@ -270,31 +281,37 @@ class ModelConverter:
             card.data.tags.extend(["llama-cpp", "gguf"])
             card.data.base_model = source_model_id
             
-            filename = os.path.basename(file_path)
-            card.text = dedent(
-                f"""
+            # Generate model card with all versions
+            versions_text = "\n".join([
+                f"- `{os.path.basename(file)}` ({quant_type})" 
+                for file, quant_type in model_files
+            ])
+            
+            card.text = dedent(f"""
                 # {repo_id}
                 This model was converted to GGUF format from [`{source_model_id}`](https://huggingface.co/{source_model_id}) using llama.cpp.
                 Refer to the [original model card](https://huggingface.co/{source_model_id}) for more details on the model.
                 
+                ## Available Versions
+                {versions_text}
+                
                 ## Use with llama.cpp
+                Replace `FILENAME` with one of the above filenames.
                 
                 ### CLI:
                 ```bash
-                llama-cli --hf-repo {repo_id} --hf-file {filename} -p "Your prompt here"
+                llama-cli --hf-repo {repo_id} --hf-file FILENAME -p "Your prompt here"
                 ```
                 
                 ### Server:
                 ```bash
-                llama-server --hf-repo {repo_id} --hf-file {filename} -c 2048
+                llama-server --hf-repo {repo_id} --hf-file FILENAME -c 2048
                 ```
                 
                 ## Model Details
-                - **Quantization Type:** {quant_type}
                 - **Original Model:** [{source_model_id}](https://huggingface.co/{source_model_id})
                 - **Format:** GGUF
-                """
-            )
+            """)
             
             # Save and upload README
             readme_path = "/tmp/README.md"
@@ -305,13 +322,15 @@ class ModelConverter:
                 repo_id=repo_id
             )
             
-            # Upload the model file
-            logger.info(f"Uploading quantized model: {file_path}")
-            api.upload_file(
-                path_or_fileobj=file_path,
-                path_in_repo=filename,
-                repo_id=repo_id
-            )
+            # Upload all model files
+            for file_path, _ in model_files:
+                filename = os.path.basename(file_path)
+                logger.info(f"Uploading quantized model: {filename}")
+                api.upload_file(
+                    path_or_fileobj=file_path,
+                    path_in_repo=filename,
+                    repo_id=repo_id
+                )
             
             # Upload imatrix.dat if it exists
             imatrix_path = "/root/llama.cpp/imatrix.dat"
@@ -329,12 +348,15 @@ class ModelConverter:
             logger.error(f"Error uploading to HuggingFace: {str(e)}")
             raise
 
+# Update main function call
 @app.local_entrypoint()
 def main(
     modelowner: str, 
     modelname: str, 
     username: str, 
-    quanttypes: Optional[str] = None,  # Comma-separated string now
+    quanttypes: Optional[str] = None,
+    branch: Optional[str] = "",
+    filter_path: Optional[str] = "",
     private: bool = False
 ):
     logger.info(f"Starting conversion process for {modelowner}/{modelname}")
@@ -345,13 +367,15 @@ def main(
         
         # Parse quanttypes from comma-separated string if provided
         quant_list = None
-        if quanttypes:
+        if (quanttypes):
             quant_list = [qt.strip() for qt in quanttypes.split(',')]
             
         converter.download_model.remote(
             model_id,
             modelname,
             username,
+            branch,
+            filter_path,
             quant_list or SUPPORTED_QUANT_TYPES,
             private
         )

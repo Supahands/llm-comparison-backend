@@ -2,6 +2,19 @@
 import os
 import logging
 from modal import Image, Volume, Secret, App, method
+from typing import Union, List, Optional
+
+# Add at top of file
+SUPPORTED_QUANT_TYPES = [
+    "q2_k", 
+    "q3_k_m", 
+    "q4_0", 
+    "q4_k_m",
+    "q5_0", 
+    "q5_k_m", 
+    "q6_k",
+    "q8_0"
+]
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -45,7 +58,7 @@ image = (
 )
 class ModelConverter:
     @method()
-    def download_model(self, model_id: str):
+    def download_model(self, model_id: str, modelname: str, username: str, branch: str = "", filter_path: str = "", quanttypes: Union[str, List[str]] = "q8_0", private: bool = False):
         logger.info(f"Downloading model {model_id}...")
         import subprocess
         import time
@@ -56,18 +69,29 @@ class ModelConverter:
             local_dir = f"/root/models/{model_id.split('/')[-1]}-hf"
             os.makedirs(local_dir, exist_ok=True)
 
-            # Track download progress
-            last_progress = 0
-            last_time = time.time()
-            progress_pattern = r"Speed: ([\d.]+) MB/sec, ([\d.]+)%"
-
             cmd = [
                 "hfdownloader",
                 "-m", model_id,
                 "-s", local_dir,
+                "-k",       
                 "-c", "8",
-                "-t", os.environ.get("HUGGING_FACE_HUB_TOKEN", "")
             ]
+
+            # Add branch if specified
+            if branch:
+                cmd.extend(["-b", branch])
+                
+            # Add filter if specified
+            if filter_path:
+                cmd.extend(["-f", filter_path])
+
+            # Add token at the end
+            cmd.extend(["-t", os.environ.get("HUGGING_FACE_HUB_TOKEN", "")])
+
+            # Track download progress
+            last_progress = 0
+            last_time = time.time()
+            progress_pattern = r"Speed: ([\d.]+) MB/sec, ([\d.]+)%"
 
             process = subprocess.Popen(
                 cmd,
@@ -114,18 +138,47 @@ class ModelConverter:
             # Commit volume after download
             volume.commit()
             logger.info("Volume committed after download")
-            return local_dir
+            
+            # Call convert_to_gguf with .remote()
+            return self.convert_to_gguf.remote(
+                local_dir, 
+                modelname,
+                quanttypes,
+                model_id,
+                username,
+                private,
+                branch,  # Pass branch name to convert_to_gguf
+                filter_path  # Pass filter_path to convert_to_gguf
+            )
 
         except Exception as e:
             logger.error(f"Error downloading model: {str(e)}")
             raise
 
     @method()
-    def convert_to_gguf(self, input_dir: str, model_name: str, quant_type: str = "Q4_K_M"):
-        logger.info(f"Converting model to GGUF format with quantization {quant_type}...")
+    def convert_to_gguf(self, input_dir: str, modelname: str, quanttypes: Union[str, List[str]], source_model_id: str, username: str, private: bool, branch: str = "", filter_path: str = ""):
+        """Convert model to GGUF format with multiple quantization types"""
+        logger.info(f"Converting model with quantization types: {quanttypes}")
         
+        # Create repo name based on modelname, branch and filter if specified
+        repo_base_name = modelname
+        if branch:
+            repo_base_name = f"{repo_base_name}-{branch}"
+        if filter_path:
+            clean_filter = filter_path.replace('/', '-').replace('_', '-').strip('-')
+            repo_base_name = f"{repo_base_name}-{clean_filter}"
+        
+        # Create single repository name for all quantization versions
+        output_repo = f"{username}/{repo_base_name}-gguf"
+        
+        if isinstance(quanttypes, str):
+            quanttypes = [quanttypes]
+        
+        if not quanttypes:
+            quanttypes = SUPPORTED_QUANT_TYPES
+            
         try:
-            # Find the actual model directory containing config.json
+            # Find model directory
             model_subdir = None
             for root, dirs, files in os.walk(input_dir):
                 if 'config.json' in files:
@@ -137,28 +190,50 @@ class ModelConverter:
                 
             logger.info(f"Found model files in: {model_subdir}")
             
-            # First convert to f16
-            fp16_path = f"/root/models/{model_name}.f16.gguf"
-            logger.info("Converting to fp16 first...")
+            # First convert to f16 (only need to do this once)
+            fp16_path = f"/root/models/{modelname}.f16.gguf"
+            if not os.path.exists(fp16_path):
+                logger.info("Converting to fp16 first...")
+                cmd = f"python /root/llama.cpp/convert_hf_to_gguf.py {model_subdir} --outfile {fp16_path} --outtype f16"
+                result = os.system(cmd)
+                if result != 0:
+                    raise Exception(f"FP16 conversion failed with code {result}")
             
-            cmd = f"python /root/llama.cpp/convert_hf_to_gguf.py {model_subdir} --outfile {fp16_path} --outtype f16"
-            result = os.system(cmd)
-            if result != 0:
-                raise Exception(f"FP16 conversion failed with code {result}")
+            # Process each quantization type
+            model_files = []
+            for quanttype in quanttypes:
+                try:
+                    output_file = f"/root/models/{modelname}.{quanttype.lower()}.gguf"
+                    
+                    # Skip if already exists
+                    if os.path.exists(output_file):
+                        logger.info(f"Quantized model already exists at {output_file}")
+                    else:
+                        # Quantize
+                        logger.info(f"Quantizing to {quanttype}...")
+                        cmd = f"/root/llama.cpp/llama-quantize {fp16_path} {output_file} {quanttype}"
+                        result = os.system(cmd)
+                        if result != 0:
+                            logger.error(f"Quantization failed for {quanttype}")
+                            continue
+                            
+                        logger.info(f"Model converted and quantized to {output_file}")
+                        volume.commit()
+                    
+                    model_files.append((output_file, quanttype))
+                    
+                except Exception as e:
+                    logger.error(f"Error processing {quanttype}: {str(e)}")
+                    continue
+        
+            # Upload all versions to the same repository
+            return self.upload_to_hf.remote(
+                model_files,
+                output_repo,
+                source_model_id,
+                private
+            )
                 
-            # Then quantize
-            output_file = f"/root/models/{model_name}.{quant_type.lower()}.gguf"
-            logger.info(f"Quantizing to {quant_type}...")
-            
-            cmd = f"/root/llama.cpp/llama-quantize {fp16_path} {output_file} {quant_type}"
-            result = os.system(cmd)
-            if result != 0:
-                raise Exception(f"Quantization failed with code {result}")
-                
-            logger.info(f"Model converted and quantized to {output_file}")
-            volume.commit()
-            return output_file
-            
         except Exception as e:
             logger.error(f"Error in conversion/quantization: {str(e)}")
             raise
@@ -184,21 +259,18 @@ class ModelConverter:
             raise
 
     @method()
-    def upload_to_hf(self, file_path: str, repo_id: str, source_model_id: str, quant_type: str, private: bool = False):
+    def upload_to_hf(self, model_files: List[tuple], repo_id: str, source_model_id: str, private: bool = False):
         logger.info("Reloading volume before upload...")
         volume.reload()
         
-        logger.info(f"Uploading GGUF model to HuggingFace repo {repo_id}...")
+        logger.info(f"Uploading GGUF models to HuggingFace repo {repo_id}...")
         from huggingface_hub import HfApi, ModelCard
         from textwrap import dedent
         
         try:
             api = HfApi()
-            
-            # Create repo first
             api.create_repo(repo_id, exist_ok=True, private=private, repo_type="model")
             
-            # Generate model card
             try:
                 card = ModelCard.load(source_model_id)
             except Exception:
@@ -209,31 +281,37 @@ class ModelConverter:
             card.data.tags.extend(["llama-cpp", "gguf"])
             card.data.base_model = source_model_id
             
-            filename = os.path.basename(file_path)
-            card.text = dedent(
-                f"""
+            # Generate model card with all versions
+            versions_text = "\n".join([
+                f"- `{os.path.basename(file)}` ({quant_type})" 
+                for file, quant_type in model_files
+            ])
+            
+            card.text = dedent(f"""
                 # {repo_id}
                 This model was converted to GGUF format from [`{source_model_id}`](https://huggingface.co/{source_model_id}) using llama.cpp.
                 Refer to the [original model card](https://huggingface.co/{source_model_id}) for more details on the model.
                 
+                ## Available Versions
+                {versions_text}
+                
                 ## Use with llama.cpp
+                Replace `FILENAME` with one of the above filenames.
                 
                 ### CLI:
                 ```bash
-                llama-cli --hf-repo {repo_id} --hf-file {filename} -p "Your prompt here"
+                llama-cli --hf-repo {repo_id} --hf-file FILENAME -p "Your prompt here"
                 ```
                 
                 ### Server:
                 ```bash
-                llama-server --hf-repo {repo_id} --hf-file {filename} -c 2048
+                llama-server --hf-repo {repo_id} --hf-file FILENAME -c 2048
                 ```
                 
                 ## Model Details
-                - **Quantization Type:** {quant_type}
                 - **Original Model:** [{source_model_id}](https://huggingface.co/{source_model_id})
                 - **Format:** GGUF
-                """
-            )
+            """)
             
             # Save and upload README
             readme_path = "/tmp/README.md"
@@ -244,13 +322,15 @@ class ModelConverter:
                 repo_id=repo_id
             )
             
-            # Upload the model file
-            logger.info(f"Uploading quantized model: {file_path}")
-            api.upload_file(
-                path_or_fileobj=file_path,
-                path_in_repo=filename,
-                repo_id=repo_id
-            )
+            # Upload all model files
+            for file_path, _ in model_files:
+                filename = os.path.basename(file_path)
+                logger.info(f"Uploading quantized model: {filename}")
+                api.upload_file(
+                    path_or_fileobj=file_path,
+                    path_in_repo=filename,
+                    repo_id=repo_id
+                )
             
             # Upload imatrix.dat if it exists
             imatrix_path = "/root/llama.cpp/imatrix.dat"
@@ -268,31 +348,37 @@ class ModelConverter:
             logger.error(f"Error uploading to HuggingFace: {str(e)}")
             raise
 
+# Update main function call
 @app.local_entrypoint()
-def main(modelowner: str, modelname: str, username: str, quanttype: str = "q8_0", private: bool = False):
+def main(
+    modelowner: str, 
+    modelname: str, 
+    username: str, 
+    quanttypes: Optional[str] = None,
+    branch: Optional[str] = "",
+    filter_path: Optional[str] = "",
+    private: bool = False
+):
     logger.info(f"Starting conversion process for {modelowner}/{modelname}")
     converter = ModelConverter()
     
     try:
-        # Build proper model IDs
         model_id = f"{modelowner}/{modelname}"
-        output_repo = f"{username}/{modelname}-{quanttype}-gguf"
         
-        # Run conversion pipeline
-        local_dir = converter.download_model.remote(model_id)
-        gguf_path = converter.convert_to_gguf.remote(
-            local_dir,
-            model_name=modelname,
-            quant_type=quanttype    
+        # Parse quanttypes from comma-separated string if provided
+        quant_list = None
+        if (quanttypes):
+            quant_list = [qt.strip() for qt in quanttypes.split(',')]
+            
+        converter.download_model.remote(
+            model_id,
+            modelname,
+            username,
+            branch,
+            filter_path,
+            quant_list or SUPPORTED_QUANT_TYPES,
+            private
         )
-        converter.upload_to_hf.remote(
-            gguf_path,
-            output_repo,
-            source_model_id=model_id,
-            quant_type=quanttype,
-            private=private
-        )
-        
         logger.info("Conversion process completed successfully")
     except Exception as e:
         logger.error(f"Conversion process failed: {str(e)}")

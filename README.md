@@ -86,13 +86,18 @@ modal run --detach hugging_face_to_guff.py \
   --modelowner tencent \
   --modelname Tencent-Hunyuan-Large \
   --quanttype q8_0 \
-  --username Supa-AI
+  --username Supa-AI \
+  --ollama-upload \
+  --hf-upload
 ```
 - The `--detach` command is used to allow this program to run even if your terminal disconnects from the modal servers
 - `modelowner` is the repo owner that you are trying to get the model from
 - `modelname` is the exact name of the model from that model owner you want to convert
 - `quanttype` is the size of quantization, default is `q8_0` which is the largest this supports 
 - `username` is used to determine which account it should upload to and create a repo for
+- `ollama-upload` is a boolean determiner for whether it should also upload the newly created quantized models to ollama under your username.
+    - **Important note!** Before uploading, make sure that the volume called `ollama` is created, once created you must run `ollama serve` on your own machine to retrieve the public and private sh keys to add to ollama, more details can be found [here](https://github.com/ollama/ollama/blob/main/docs/import.md)
+- `hf-upload` another boolean determiner on whether it should upload these models to your hugging face repo 
 
 <h3>Technical Details</h3>
 

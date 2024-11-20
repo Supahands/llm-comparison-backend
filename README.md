@@ -144,6 +144,15 @@ modal run --detach hugging_face_to_guff.py \
 </a>
 </td>
 
+<td align="center">
+<a href="https://github.com/EvanZJ">
+<img src="https://avatars.githubusercontent.com/EvanZJ" width="100px;" alt="Noah Profile Picture"/><br>
+<sub>
+<b>EvanZJ</b>
+</sub>
+</a>
+</td>
+
 </tr>
 </table>
  

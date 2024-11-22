@@ -232,6 +232,7 @@ class ModelConverter:
                     model_files,
                     f"{username}/{modelname}-gguf",
                     source_model_id,
+                    quanttype,
                     private,
                 )
 

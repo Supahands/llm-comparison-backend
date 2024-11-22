@@ -88,7 +88,8 @@ modal run --detach hugging_face_to_guff.py \
   --quanttypes q8_0 \
   --username Supa-AI \
   --ollama-upload \
-  --hf-upload
+  --hf-upload \
+  --clean-run
 ```
 - The `--detach` command is used to allow this program to run even if your terminal disconnects from the modal servers
 - `modelowner` is the repo owner that you are trying to get the model from
@@ -98,6 +99,7 @@ modal run --detach hugging_face_to_guff.py \
 - `ollama-upload` is a boolean determiner for whether it should also upload the newly created quantized models to ollama under your username.
     - **Important note!** Before uploading, make sure that the volume called `ollama` is created, once created you must run `ollama serve` on your own machine to retrieve the public and private sh keys to add to ollama, more details can be found [here](https://github.com/ollama/ollama/blob/main/docs/import.md)
 - `hf-upload` another boolean determiner on whether it should upload these models to your hugging face repo 
+- `clean-run` is a boolean determiner on whether it should clean up all the existing model files in your ollama volume before running, this can fix issues where ollama won't let you re-run due to the model already existing in your volume from a previous run.
 
 <h3>Technical Details</h3>
 

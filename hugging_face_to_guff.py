@@ -84,7 +84,8 @@ class ModelConverter:
         quanttypes: Union[str, List[str]] = "q8_0",
         private: bool = False,
         ollama_upload: bool = False,
-        hf_upload: bool = False,  # New parameter
+        hf_upload: bool = False,
+        clean_run: bool = False,  # New parameter
     ):
         logger.info(f"Downloading model {model_id}...")
         import subprocess
@@ -138,7 +139,8 @@ class ModelConverter:
                 branch,
                 filter_path,
                 ollama_upload,
-                hf_upload,  # Pass new parameter
+                hf_upload,
+                clean_run,  # Pass through
             )
 
         except Exception as e:
@@ -158,6 +160,7 @@ class ModelConverter:
         filter_path: str = "",
         ollama_upload: bool = False,
         hf_upload: bool = False,  # New parameter
+        clean_run: bool = False,  # New parameter
     ):
         """Convert model to GGUF format with multiple quantization types and push to Ollama"""
         logger.info(f"Converting model with quantization types: {quanttypes}")
@@ -220,7 +223,7 @@ class ModelConverter:
             # Upload all versions to Ollama if ollama_upload is True
             if ollama_upload:
                 self.push_to_ollama.remote(
-                    model_files, modelname, source_model_id, username
+                    model_files, modelname, source_model_id, username, clean_run
                 )
 
             # You can also upload to Hugging Face if needed
@@ -229,7 +232,7 @@ class ModelConverter:
                     model_files,
                     f"{username}/{modelname}-gguf",
                     source_model_id,
-                    private
+                    private,
                 )
 
         except Exception as e:
@@ -243,18 +246,39 @@ class ModelConverter:
         modelname: str,
         source_model_id: str,
         username: str,
+        clean_run: bool = False,  # New parameter
     ):
         """Push converted models to Ollama using tags for different quantizations"""
         logger.info("Pushing models to Ollama...")
 
         try:
-            base_name = f"{username}/{modelname}"
+            if clean_run:
+                logger.info("Clean run requested - removing existing Ollama models...")
+                ollama_models_dir = "/root/.ollama/models"
+                if os.path.exists(ollama_models_dir):
+                    import shutil
+                    shutil.rmtree(ollama_models_dir)
+                    os.makedirs(ollama_models_dir)
+                    logger.info("Cleaned Ollama models directory")
+
+            # Convert to lowercase for Ollama compatibility
+            base_name = f"{username}/{modelname.lower()}"
+            logger.info(f"Using lowercase model name: {base_name}")
 
             for model_path, quant_type in model_files:
                 tag_name = quant_type.lower()
 
+                # Verify file exists and is accessible
+                if not os.path.exists(model_path):
+                    logger.error(f"Model file not found: {model_path}")
+                    continue
+
+                # Get absolute path
+                model_path = os.path.abspath(model_path)
+                logger.info(f"Using absolute model path: {model_path}")
+
                 # Create Modelfile
-                with tempfile.NamedTemporaryFile(mode='w', suffix='.Modelfile', delete=False) as f:
+                with tempfile.NamedTemporaryFile(mode="w", suffix=".Modelfile", delete=False) as f:
                     modelfile_content = f"""FROM {model_path}
 LICENSE Apache 2.0
 TEMPLATE "{{{{.Input}}}}"
@@ -266,25 +290,76 @@ PARAMETER stop "Assistant:"
 """
                     f.write(modelfile_content)
                     f.flush()
-                    logger.info(f"Created Modelfile for {base_name}:{tag_name}:\n{modelfile_content}")
+                    modelfile_path = f.name
+                    logger.info(f"Created Modelfile at {modelfile_path}")
 
-                # Create model in Ollama with tag
-                logger.info(f"Creating Ollama model {base_name}:{tag_name}")
-                create_cmd = ["ollama", "create", f"{base_name}:{tag_name}", "-f", f.name]
-                subprocess.run(create_cmd, check=True)
+                try:
+                    # Wait for Ollama service
+                    import time
 
-                # Push to Ollama registry
-                logger.info(f"Pushing model {base_name}:{tag_name} to Ollama")
-                push_cmd = ["ollama", "push", f"{base_name}:{tag_name}"]
-                subprocess.run(push_cmd, check=True)
+                    max_retries = 30
+                    for i in range(max_retries):
+                        try:
+                            subprocess.run(
+                                ["ollama", "list"], check=True, capture_output=True
+                            )
+                            break
+                        except Exception:
+                            if i == max_retries - 1:
+                                raise Exception("Ollama service not responding")
+                            logger.info(
+                                f"Waiting for Ollama service... ({i+1}/{max_retries})"
+                            )
+                            time.sleep(1)
 
-                logger.info(f"Successfully pushed {base_name}:{tag_name} to Ollama")
+                    # Create model
+                    logger.info(f"Creating Ollama model {base_name}:{tag_name}")
+                    subprocess.run(
+                        [
+                            "ollama",
+                            "create",
+                            f"{base_name}:{tag_name}",
+                            "-f",
+                            modelfile_path,
+                        ],
+                        check=True,
+                        capture_output=True,
+                        text=True,
+                    )
 
-        except subprocess.CalledProcessError as e:
-            logger.error(f"Error pushing to Ollama: {e}")
-            raise Exception(f"Failed to push Ollama model: {base_name}:{tag_name}") from e
+                    # Verify model was created
+                    result = subprocess.run(
+                        ["ollama", "list"], check=True, capture_output=True, text=True
+                    )
+                    if f"{base_name}:{tag_name}" not in result.stdout:
+                        raise Exception(
+                            f"Model {base_name}:{tag_name} not found after creation"
+                        )
+
+                    # Push model
+                    logger.info(f"Pushing model {base_name}:{tag_name}")
+                    push_result = subprocess.run(
+                        ["ollama", "push", f"{base_name}:{tag_name}"],
+                        check=True,
+                        capture_output=True,
+                        text=True,
+                    )
+                    logger.info(f"Push output: {push_result.stdout}")
+
+                except subprocess.CalledProcessError as e:
+                    logger.error(f"Command failed: {e.cmd}")
+                    logger.error(f"Output: {e.output}")
+                    logger.error(f"Error: {e.stderr}")
+                    raise
+                finally:
+                    # Cleanup
+                    if os.path.exists(modelfile_path):
+                        os.unlink(modelfile_path)
+
+                logger.info(f"Successfully pushed {base_name}:{tag_name}")
+
         except Exception as e:
-            logger.error(f"Error pushing to Ollama: {e}")
+            logger.error(f"Error pushing to Ollama: {str(e)}")
             raise
 
 
@@ -299,7 +374,8 @@ def main(
     filter_path: Optional[str] = "",
     private: bool = False,
     ollama_upload: bool = False,
-    hf_upload: bool = False,  # New parameter
+    hf_upload: bool = False,
+    clean_run: bool = False,  # New parameter
 ):
     logger.info(f"Starting conversion process for {modelowner}/{modelname}")
     converter = ModelConverter()
@@ -322,6 +398,7 @@ def main(
             private,
             ollama_upload,  # Pass the Ollama upload flag
             hf_upload,  # Pass new parameter
+            clean_run,  # Pass through
         )
         logger.info("Conversion process completed successfully")
     except Exception as e:

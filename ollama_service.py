@@ -15,15 +15,19 @@ logging.basicConfig(level=logging.INFO)
 # Default server port.
 MODEL_IDS: list[str] = [
     "llama3",
+    "llama3.1",
     "llama3.2",
     "llama3.2:1b",
     "mistral",
     "gemma2",
     "qwen2.5",
+    "yi",
     "aisingapore/gemma2-9b-cpt-sea-lionv3-instruct",
     "hf.co/Supa-AI/malaysian-Llama-3.2-3B-Instruct-Q8_0-GGUF",
-    "hf.co/Supa-AI/gemma2-9b-cpt-sahabatai-v1-instruct-q8_0-gguf",
-    "hf.co/Supa-AI/llama3-8b-cpt-sahabatai-v1-instruct-q8_0-gguf"
+    "Supa-AI/gemma2-9b-cpt-sahabatai-v1-instruct:q8_0",
+    "Supa-AI/llama3-8b-cpt-sahabatai-v1-instruct:q8_0",
+    "Supa-AI/gemma2-9b-cpt-sahabatai-v1-base:q8_0",
+    "Supa-AI/ministral-8b-instruct-2410:q8_0"
 ]
 
 OLLAMA_PORT: int = 11434

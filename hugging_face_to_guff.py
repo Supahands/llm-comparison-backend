@@ -85,7 +85,7 @@ class ModelConverter:
         private: bool = False,
         ollama_upload: bool = False,
         hf_upload: bool = False,
-        clean_run: bool = False,  # New parameter
+        clean_run: bool = False,  
     ):
         logger.info(f"Downloading model {model_id}...")
         import subprocess
@@ -159,8 +159,8 @@ class ModelConverter:
         branch: str = "",
         filter_path: str = "",
         ollama_upload: bool = False,
-        hf_upload: bool = False,  # New parameter
-        clean_run: bool = False,  # New parameter
+        hf_upload: bool = False,  
+        clean_run: bool = False,  
     ):
         """Convert model to GGUF format with multiple quantization types and push to Ollama"""
         logger.info(f"Converting model with quantization types: {quanttypes}")
@@ -336,7 +336,7 @@ class ModelConverter:
         modelname: str,
         source_model_id: str,
         username: str,
-        clean_run: bool = False,  # New parameter
+        clean_run: bool = False,  
     ):
         """Push converted models to Ollama using tags for different quantizations"""
         logger.info("Pushing models to Ollama...")
@@ -465,7 +465,7 @@ def main(
     private: bool = False,
     ollama_upload: bool = False,
     hf_upload: bool = False,
-    clean_run: bool = False,  # New parameter
+    clean_run: bool = False,  
 ):
     logger.info(f"Starting conversion process for {modelowner}/{modelname}")
     converter = ModelConverter()

@@ -232,7 +232,6 @@ class ModelConverter:
                     model_files,
                     f"{username}/{modelname}-gguf",
                     source_model_id,
-                    quanttype,
                     private,
                 )
 
@@ -241,21 +240,18 @@ class ModelConverter:
             raise
         
     @method()
-    def upload_to_hf(self, file_path: str, repo_id: str, source_model_id: str, quant_type: str, private: bool = False):
+    def upload_to_hf(self, model_files: List[tuple], repo_id: str, source_model_id: str, private: bool = False):
         logger.info("Reloading volume before upload...")
         volume.reload()
         
-        logger.info(f"Uploading GGUF model to HuggingFace repo {repo_id}...")
+        logger.info(f"Uploading GGUF models to HuggingFace repo {repo_id}...")
         from huggingface_hub import HfApi, ModelCard
         from textwrap import dedent
         
         try:
             api = HfApi()
-            
-            # Create repo first
             api.create_repo(repo_id, exist_ok=True, private=private, repo_type="model")
             
-            # Generate model card
             try:
                 card = ModelCard.load(source_model_id)
             except Exception:
@@ -266,31 +262,37 @@ class ModelConverter:
             card.data.tags.extend(["llama-cpp", "gguf"])
             card.data.base_model = source_model_id
             
-            filename = os.path.basename(file_path)
-            card.text = dedent(
-                f"""
+            # Generate model card with all versions
+            versions_text = "\n".join([
+                f"- `{os.path.basename(file)}` ({quant_type})" 
+                for file, quant_type in model_files
+            ])
+            
+            card.text = dedent(f"""
                 # {repo_id}
                 This model was converted to GGUF format from [`{source_model_id}`](https://huggingface.co/{source_model_id}) using llama.cpp.
                 Refer to the [original model card](https://huggingface.co/{source_model_id}) for more details on the model.
                 
+                ## Available Versions
+                {versions_text}
+                
                 ## Use with llama.cpp
+                Replace `FILENAME` with one of the above filenames.
                 
                 ### CLI:
                 ```bash
-                llama-cli --hf-repo {repo_id} --hf-file {filename} -p "Your prompt here"
+                llama-cli --hf-repo {repo_id} --hf-file FILENAME -p "Your prompt here"
                 ```
                 
                 ### Server:
                 ```bash
-                llama-server --hf-repo {repo_id} --hf-file {filename} -c 2048
+                llama-server --hf-repo {repo_id} --hf-file FILENAME -c 2048
                 ```
                 
                 ## Model Details
-                - **Quantization Type:** {quant_type}
                 - **Original Model:** [{source_model_id}](https://huggingface.co/{source_model_id})
                 - **Format:** GGUF
-                """
-            )
+            """)
             
             # Save and upload README
             readme_path = "/tmp/README.md"
@@ -301,13 +303,15 @@ class ModelConverter:
                 repo_id=repo_id
             )
             
-            # Upload the model file
-            logger.info(f"Uploading quantized model: {file_path}")
-            api.upload_file(
-                path_or_fileobj=file_path,
-                path_in_repo=filename,
-                repo_id=repo_id
-            )
+            # Upload all model files
+            for file_path, _ in model_files:
+                filename = os.path.basename(file_path)
+                logger.info(f"Uploading quantized model: {filename}")
+                api.upload_file(
+                    path_or_fileobj=file_path,
+                    path_in_repo=filename,
+                    repo_id=repo_id
+                )
             
             # Upload imatrix.dat if it exists
             imatrix_path = "/root/llama.cpp/imatrix.dat"

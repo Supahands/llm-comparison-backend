@@ -6,7 +6,8 @@ from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from contextlib import contextmanager
-from modal import Image, App, asgi_app, Secret
+from modal import Image, App, asgi_app, Secret, gpu
+from const import LIST_OF_REDACTED_WORDS
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -32,7 +33,13 @@ web_app.add_middleware(
 )
 
 image = Image.debian_slim().pip_install(
-    ["litellm", "supabase", "pydantic==2.5.3", "fastapi==0.109.0", "openai"]
+    [
+        "litellm", 
+        "supabase", 
+        "pydantic==2.5.3", 
+        "fastapi==0.109.0", 
+        "openai", 
+    ]
 )
 llm_compare_app = App(
     name="llm-compare-api",
@@ -49,12 +56,12 @@ with llm_compare_app.image.imports():
     from litellm import completion
     from supabase import create_client, Client
     from openai import OpenAIError
+    import re
 
     # Initialize Supabase client
     supabase_url = os.environ["SUPABASE_URL"]
     supabase_key = os.environ["SUPABASE_KEY"]
     supabase: Client = create_client(supabase_url, supabase_key)
-
 
 # Pydantic models
 class FunctionCall(BaseModel):
@@ -171,7 +178,12 @@ def temporary_env_var(key: str, value: str):
             del os.environ[key]
         else:
             os.environ[key] = original_value
-
+        
+def redact_words(model_name, text):
+    for word in LIST_OF_REDACTED_WORDS:
+        text = re.sub(rf"(?i)\b{re.escape(word)}\b", r"<redacted>\g<0></redacted>", text)
+            
+    return text
 
 async def handle_completion(
     model_name: str, message: str, api_base: Optional[str] = None
@@ -193,8 +205,10 @@ async def handle_completion(
             )
 
         end_time = time.time()
+        
         response_obj.usage.response_time = (end_time - start_time) * 1000
-
+        
+        response_obj.choices[0].message.content = redact_words(model_name, response_obj.choices[0].message.content)
         # Convert the usage object
         response_obj.usage = Usage.from_response(response_obj)
         
@@ -229,7 +243,7 @@ async def handle_completion(
     responses={
         200: {"description": "Successful response with the model's reply."},
         400: {"description": "Bad Request. Model or message not provided."},
-        404: {"description": "Model not supported."},
+        404: {"description": "Model is not supported."},
         500: {"description": "Internal Server Error."},
     },
 )

@@ -26,7 +26,8 @@ MODEL_IDS: list[str] = [
     "Supa-AI/llama3-8b-cpt-sahabatai-v1-instruct:q8_0",
     "Supa-AI/gemma2-9b-cpt-sahabatai-v1-base:q8_0",
     "Supa-AI/ministral-8b-instruct-2410:q8_0",
-    "Supa-AI/mixtral-8x7b-instruct-v0.1:q8_0"
+    "Supa-AI/mixtral-8x7b-instruct-v0.1:q8_0",
+    "Supa-AI/malaysian-llama-3.2-3b-instruct:q8_0"
 ]
 
 OLLAMA_PORT: int = 11434

@@ -276,7 +276,7 @@ class ModelConverter:
                 
             if card.data.tags is None:
                 card.data.tags = []
-            card.data.tags.extend(["llama-cpp", "gguf"])
+            card.data.tags.extend(["llama-cpp", "gguf", "quantized", "llm", "llama", "ollama"])
             card.data.base_model = source_model_id
             
             # Generate model card with all versions
@@ -286,29 +286,29 @@ class ModelConverter:
             ])
             
             card.text = dedent(f"""
-                # {repo_id}
-                This model was converted to GGUF format from [`{source_model_id}`](https://huggingface.co/{source_model_id}) using llama.cpp.
-                Refer to the [original model card](https://huggingface.co/{source_model_id}) for more details on the model.
-                
-                ## Available Versions
-                {versions_text}
-                
-                ## Use with llama.cpp
-                Replace `FILENAME` with one of the above filenames.
-                
-                ### CLI:
-                ```bash
-                llama-cli --hf-repo {repo_id} --hf-file FILENAME -p "Your prompt here"
-                ```
-                
-                ### Server:
-                ```bash
-                llama-server --hf-repo {repo_id} --hf-file FILENAME -c 2048
-                ```
-                
-                ## Model Details
-                - **Original Model:** [{source_model_id}](https://huggingface.co/{source_model_id})
-                - **Format:** GGUF
+# {repo_id}
+This model was converted to GGUF format from [`{source_model_id}`](https://huggingface.co/{source_model_id}) using llama.cpp.
+Refer to the [original model card](https://huggingface.co/{source_model_id}) for more details on the model.
+
+## Available Versions
+{versions_text}
+
+## Use with llama.cpp
+Replace `FILENAME` with one of the above filenames.
+
+### CLI:
+```bash
+llama-cli --hf-repo {repo_id} --hf-file FILENAME -p "Your prompt here"
+```
+
+### Server:
+```bash
+llama-server --hf-repo {repo_id} --hf-file FILENAME -c 2048
+```
+
+## Model Details
+- **Original Model:** [{source_model_id}](https://huggingface.co/{source_model_id})
+- **Format:** GGUF
             """)
             
             # Save and upload README

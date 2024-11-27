@@ -255,6 +255,96 @@ class ModelConverter:
         except Exception as e:
             logger.error(f"Error in conversion/quantization: {str(e)}")
             raise
+    
+    @method()
+    def upload_to_hf(self, model_files: List[tuple], repo_id: str, source_model_id: str, private: bool = False):
+        logger.info("Reloading volume before upload...")
+        volume.reload()
+        
+        logger.info(f"Uploading GGUF models to HuggingFace repo {repo_id}...")
+        from huggingface_hub import HfApi, ModelCard
+        from textwrap import dedent
+        
+        try:
+            api = HfApi()
+            api.create_repo(repo_id, exist_ok=True, private=private, repo_type="model")
+            
+            try:
+                card = ModelCard.load(source_model_id)
+            except Exception:
+                card = ModelCard("")
+                
+            if card.data.tags is None:
+                card.data.tags = []
+            card.data.tags.extend(["llama-cpp", "gguf"])
+            card.data.base_model = source_model_id
+            
+            # Generate model card with all versions
+            versions_text = "\n".join([
+                f"- `{os.path.basename(file)}` ({quant_type})" 
+                for file, quant_type in model_files
+            ])
+            
+            card.text = dedent(f"""
+                # {repo_id}
+                This model was converted to GGUF format from [`{source_model_id}`](https://huggingface.co/{source_model_id}) using llama.cpp.
+                Refer to the [original model card](https://huggingface.co/{source_model_id}) for more details on the model.
+                
+                ## Available Versions
+                {versions_text}
+                
+                ## Use with llama.cpp
+                Replace `FILENAME` with one of the above filenames.
+                
+                ### CLI:
+                ```bash
+                llama-cli --hf-repo {repo_id} --hf-file FILENAME -p "Your prompt here"
+                ```
+                
+                ### Server:
+                ```bash
+                llama-server --hf-repo {repo_id} --hf-file FILENAME -c 2048
+                ```
+                
+                ## Model Details
+                - **Original Model:** [{source_model_id}](https://huggingface.co/{source_model_id})
+                - **Format:** GGUF
+            """)
+            
+            # Save and upload README
+            readme_path = "/tmp/README.md"
+            card.save(readme_path)
+            api.upload_file(
+                path_or_fileobj=readme_path,
+                path_in_repo="README.md",
+                repo_id=repo_id
+            )
+            
+            # Upload all model files
+            for file_path, _ in model_files:
+                filename = os.path.basename(file_path)
+                logger.info(f"Uploading quantized model: {filename}")
+                api.upload_file(
+                    path_or_fileobj=file_path,
+                    path_in_repo=filename,
+                    repo_id=repo_id
+                )
+            
+            # Upload imatrix.dat if it exists
+            imatrix_path = "/root/llama.cpp/imatrix.dat"
+            if os.path.isfile(imatrix_path):
+                logger.info("Uploading imatrix.dat")
+                api.upload_file(
+                    path_or_fileobj=imatrix_path,
+                    path_in_repo="imatrix.dat",
+                    repo_id=repo_id
+                )
+                
+            logger.info("Upload completed successfully")
+            
+        except Exception as e:
+            logger.error(f"Error uploading to HuggingFace: {str(e)}")
+            raise
 
     @method()
     def push_to_ollama(

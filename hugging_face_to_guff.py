@@ -91,6 +91,23 @@ class ModelConverter:
         import subprocess
 
         try:
+            # Clean model storage if clean_run is True
+            if clean_run:
+                logger.info("Clean run requested - cleaning model storage volume...")
+                models_dir = "/root/models"
+                if os.path.exists(models_dir):
+                    import shutil
+                    # Remove all contents of models directory
+                    for item in os.listdir(models_dir):
+                        item_path = os.path.join(models_dir, item)
+                        if os.path.isfile(item_path):
+                            os.unlink(item_path)
+                        elif os.path.isdir(item_path):
+                            shutil.rmtree(item_path)
+                    logger.info("Cleaned model storage directory")
+                    # Commit volume after cleanup
+                    volume.commit()
+
             local_dir = f"/root/models/{model_id.split('/')[-1]}-hf"
             os.makedirs(local_dir, exist_ok=True)
 
@@ -238,7 +255,7 @@ class ModelConverter:
         except Exception as e:
             logger.error(f"Error in conversion/quantization: {str(e)}")
             raise
-        
+    
     @method()
     def upload_to_hf(self, model_files: List[tuple], repo_id: str, source_model_id: str, private: bool = False):
         logger.info("Reloading volume before upload...")
@@ -259,7 +276,7 @@ class ModelConverter:
                 
             if card.data.tags is None:
                 card.data.tags = []
-            card.data.tags.extend(["llama-cpp", "gguf"])
+            card.data.tags.extend(["llama-cpp", "gguf", "quantized", "llm", "llama", "ollama"])
             card.data.base_model = source_model_id
             
             # Generate model card with all versions
@@ -269,29 +286,29 @@ class ModelConverter:
             ])
             
             card.text = dedent(f"""
-                # {repo_id}
-                This model was converted to GGUF format from [`{source_model_id}`](https://huggingface.co/{source_model_id}) using llama.cpp.
-                Refer to the [original model card](https://huggingface.co/{source_model_id}) for more details on the model.
-                
-                ## Available Versions
-                {versions_text}
-                
-                ## Use with llama.cpp
-                Replace `FILENAME` with one of the above filenames.
-                
-                ### CLI:
-                ```bash
-                llama-cli --hf-repo {repo_id} --hf-file FILENAME -p "Your prompt here"
-                ```
-                
-                ### Server:
-                ```bash
-                llama-server --hf-repo {repo_id} --hf-file FILENAME -c 2048
-                ```
-                
-                ## Model Details
-                - **Original Model:** [{source_model_id}](https://huggingface.co/{source_model_id})
-                - **Format:** GGUF
+# {repo_id}
+This model was converted to GGUF format from [`{source_model_id}`](https://huggingface.co/{source_model_id}) using llama.cpp.
+Refer to the [original model card](https://huggingface.co/{source_model_id}) for more details on the model.
+
+## Available Versions
+{versions_text}
+
+## Use with llama.cpp
+Replace `FILENAME` with one of the above filenames.
+
+### CLI:
+```bash
+llama-cli --hf-repo {repo_id} --hf-file FILENAME -p "Your prompt here"
+```
+
+### Server:
+```bash
+llama-server --hf-repo {repo_id} --hf-file FILENAME -c 2048
+```
+
+## Model Details
+- **Original Model:** [{source_model_id}](https://huggingface.co/{source_model_id})
+- **Format:** GGUF
             """)
             
             # Save and upload README

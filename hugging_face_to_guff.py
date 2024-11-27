@@ -91,6 +91,23 @@ class ModelConverter:
         import subprocess
 
         try:
+            # Clean model storage if clean_run is True
+            if clean_run:
+                logger.info("Clean run requested - cleaning model storage volume...")
+                models_dir = "/root/models"
+                if os.path.exists(models_dir):
+                    import shutil
+                    # Remove all contents of models directory
+                    for item in os.listdir(models_dir):
+                        item_path = os.path.join(models_dir, item)
+                        if os.path.isfile(item_path):
+                            os.unlink(item_path)
+                        elif os.path.isdir(item_path):
+                            shutil.rmtree(item_path)
+                    logger.info("Cleaned model storage directory")
+                    # Commit volume after cleanup
+                    volume.commit()
+
             local_dir = f"/root/models/{model_id.split('/')[-1]}-hf"
             os.makedirs(local_dir, exist_ok=True)
 

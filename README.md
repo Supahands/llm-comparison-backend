@@ -85,7 +85,7 @@ modal secret create my-huggingface-secret HUGGING_FACE_HUB_TOKEN="your_token"
 modal run --detach hugging_face_to_guff.py \
   --modelowner tencent \
   --modelname Tencent-Hunyuan-Large \
-  --quanttype q8_0 \
+  --quanttypes q8_0 \
   --username Supa-AI \
   --ollama-upload \
   --hf-upload \

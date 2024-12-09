@@ -18,7 +18,7 @@ MODEL_IDS: list[str] = [
     "llama3.1",
     "llama3.2",
     "llama3.2:1b",
-    "llama3.3"
+    "llama3.3",
     "mistral",
     "gemma2",
     "qwen2.5",

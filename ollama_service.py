@@ -191,7 +191,7 @@ async def proxy(request: Request, path: str):
     client = httpx.AsyncClient(
         base_url=OLLAMA_URL,
         headers=request.headers,
-        timeout=httpx.Timeout(300.0, read=300.0)  # 5 minute timeout
+        timeout=httpx.Timeout(180.0, read=180.0)  # 5 minute timeout
     )
 
     url = httpx.URL(path=request.url.path, query=request.url.query.encode("utf-8"))

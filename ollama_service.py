@@ -189,45 +189,65 @@ def ollama_api():
 async def proxy(request: Request, path: str):
     # Create a new client on every request.
     client = httpx.AsyncClient(
-        base_url=OLLAMA_URL, headers=request.headers, timeout=60
-    )  # ollama can take a few seconds to respond
+        base_url=OLLAMA_URL,
+        headers=request.headers,
+        timeout=httpx.Timeout(180.0, read=180.0)  # 5 minute timeout
+    )
 
     url = httpx.URL(path=request.url.path, query=request.url.query.encode("utf-8"))
+    
+    try:
+        # Handle streaming responses
+        async def _streaming_response():
+            body = await request.body()
+            rp_req = client.build_request(
+                request.method,
+                url,
+                content=request.stream() if not body else None,
+                json=await request.json() if body else None,
+            )
+            
+            try:
+                rp_resp = await client.send(rp_req, stream=True)
+                return StreamingResponse(
+                    rp_resp.aiter_raw(),
+                    status_code=rp_resp.status_code,
+                    media_type="text/event-stream",
+                    background=BackgroundTask(rp_resp.aclose)
+                )
+            except httpx.ReadTimeout:
+                return Response(
+                    content={"error": "Request timed out"},
+                    status_code=504,
+                    media_type="application/json"
+                )
 
-    # Supports both streaming and non-streaming responses.
-    async def _response():
-        # Handle all other non-streaming methods.
-        response = await client.request(
-            request.method,
-            url,
-            params=request.query_params,
-            json=await request.json() if len(await request.body()) > 0 else None,
-        )
-        return Response(
-            content=response.content,
-            status_code=response.status_code,
-            headers=dict(response.headers),
-        )
+        # Handle regular responses
+        async def _response():
+            body = await request.body()
+            response = await client.request(
+                request.method,
+                url,
+                params=request.query_params,
+                json=await request.json() if body else None
+            )
+            return Response(
+                content=response.content,
+                status_code=response.status_code,
+                headers=dict(response.headers)
+            )
 
-    async def _streaming_response():
-        rp_req = client.build_request(
-            request.method,
-            url,
-            content=request.stream(),
-            json=await request.json() if len(await request.body()) > 0 else None,
-        )
-
-        rp_resp = await client.send(rp_req, stream=True)
-        background_task = BackgroundTask(rp_resp.aclose)
-        return StreamingResponse(
-            rp_resp.aiter_raw(),
-            media_type="text/event-stream",
-            background=background_task,
-        )
-
-    # These two methods support streaming responses.
-    # Reference: https://github.com/jmorganca/ollama/blob/main/docs/api.md
-    if request.url.path in ("/api/generate", "/api/chat"):
-        return await _streaming_response()
-    else:
+        # Route based on endpoint
+        if request.url.path in ("/api/generate", "/api/chat"):
+            return await _streaming_response()
         return await _response()
+
+    except Exception as e:
+        logging.error(f"Proxy error: {str(e)}")
+        return Response(
+            content={"error": str(e)},
+            status_code=500,
+            media_type="application/json"
+        )
+    finally:
+        await client.aclose()

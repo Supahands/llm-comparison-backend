@@ -41,6 +41,7 @@ image = Image.debian_slim().pip_install(
         "pydantic==2.5.3", 
         "fastapi==0.109.0", 
         "openai", 
+        "langfuse"
     ]
 )
 llm_compare_app = App(
@@ -50,7 +51,8 @@ llm_compare_app = App(
         Secret.from_name("SUPABASE_SECRETS"),
         Secret.from_name("OLLAMA_API"),
         Secret.from_name("llm_comparison_github"),
-        Secret.from_name("my-huggingface-secret")
+        Secret.from_name("my-huggingface-secret"),
+        Secret.from_name("Langfuse-Secret")
     ],
 )
 
@@ -62,6 +64,8 @@ with llm_compare_app.image.imports():
     import re
 
     litellm.set_verbose=True # 👈 this is the 1-line change you need to make
+    litellm.success_callback = ["langfuse"]
+    litellm.failure_callback = ["langfuse"] # logs errors to langfuse
 
     # Initialize Supabase client
     supabase_url = os.environ["SUPABASE_URL"]

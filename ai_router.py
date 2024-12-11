@@ -12,6 +12,8 @@ from const import LIST_OF_REDACTED_WORDS
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 
+os.environ['LITELLM_LOG'] = 'DEBUG'
+
 web_app = FastAPI(
     title="LLM Comparison API",
     description="API for interacting with different language models.",
@@ -53,10 +55,13 @@ llm_compare_app = App(
 )
 
 with llm_compare_app.image.imports():
+    import litellm
     from litellm import completion
     from supabase import create_client, Client
     from openai import OpenAIError
     import re
+
+    litellm.set_verbose=True # 👈 this is the 1-line change you need to make
 
     # Initialize Supabase client
     supabase_url = os.environ["SUPABASE_URL"]

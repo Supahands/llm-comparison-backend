@@ -212,10 +212,15 @@ async def handle_completion(
             )
 
         end_time = time.time()
-        
         response_obj.usage.response_time = (end_time - start_time) * 1000
         
-        response_obj.choices[0].message.content = redact_words(model_name, response_obj.choices[0].message.content)
+        # Check if response is empty and replace with default message
+        content = response_obj.choices[0].message.content
+        if not content or content.strip() == "":
+            response_obj.choices[0].message.content = "Sorry, I couldn't answer this question :("
+        else:
+            response_obj.choices[0].message.content = redact_words(model_name, content)
+            
         # Convert the usage object
         response_obj.usage = Usage.from_response(response_obj)
         

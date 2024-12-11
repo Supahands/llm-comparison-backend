@@ -266,7 +266,7 @@ async def proxy(request: Request, path: str):
         )
 
 @ollama_app.function(
-    gpu=gpu.A10G(count=2), allow_concurrent_inputs=10, concurrency_limit=1
+    gpu=gpu.A10G(count=2), allow_concurrent_inputs=10, concurrency_limit=1, container_idle_timeout=1200,
 )
 @modal.asgi_app()
 def ollama_api():

@@ -206,13 +206,19 @@ async def handle_completion(
                 model=model_name,
                 messages=[{"content": message, "role": "user"}],
                 api_base=api_base,
-                timeout=180.00
+                timeout=180.00,
+                metadata = {
+                    "generation_name": model_name, # set langfuse generation name
+                }
             )
         else:
             response_obj = completion(
                 model=model_name,
                 messages=[{"content": message, "role": "user"}],
-                timeout=180.00
+                timeout=180.00,
+                metadata = {
+                    "generation_name": model_name, # set langfuse generation name
+                }
             )
 
         end_time = time.time()

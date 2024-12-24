@@ -141,6 +141,13 @@ class Usage(BaseModel):
             response_time=response_obj.usage.response_time
         )
 
+class ModelConfig(BaseModel):
+    system_prompt: str
+    temperature: float
+    top_p: float
+    max_tokens: int
+    json_format: bool
+    
 
 class ModelResponse(BaseModel):
     id: str
@@ -155,6 +162,7 @@ class ModelResponse(BaseModel):
 class MessageRequest(BaseModel):
     model: str = Field(..., description="Name of the model to use.")
     message: str = Field(..., description="Message text to send to the model.")
+    config: ModelConfig
     openai_api_key: Optional[str] = Field(
         None, description="API key if required by the openai provider."
     )
@@ -195,7 +203,7 @@ def redact_words(model_name, text):
     return text
 
 async def handle_completion(
-    model_name: str, message: str, api_base: Optional[str] = None
+    model_name: str, message: str, config: ModelConfig, api_base: Optional[str] = None,
 ):
     try:
         start_time = time.time()
@@ -204,21 +212,48 @@ async def handle_completion(
             logging.info(f"Using API base: {api_base}")
             response_obj = completion(
                 model=model_name,
-                messages=[{"content": message, "role": "user"}],
-                api_base=api_base,
+                messages=[
+                    {
+                        "content": config.system_prompt + ". Please generate the response in JSON" if config.json_format else "",  
+                        "role": "system",
+                    },
+                    {
+                        "content": message, 
+                        "role": "user",
+                    }
+                ],
+                api_base=api_base + "/v1",
                 timeout=180.00,
                 metadata = {
                     "generation_name": model_name, # set langfuse generation name
-                }
+                },
+                temperature=config.temperature,
+                max_tokens=config.max_tokens,
+                top_p=config.top_p,
+                response_format= {"type": "json_object"} if config.json_format else None,
+                api_key="None",
             )
         else:
             response_obj = completion(
                 model=model_name,
-                messages=[{"content": message, "role": "user"}],
+                messages=[
+                    {
+                        "content": config.system_prompt + ". Please generate the response in JSON" if config.json_format else "", 
+                        "role": "system",
+                    },
+                    {
+                        "content": message, 
+                        "role": "user",
+                    }
+                ],
                 timeout=180.00,
                 metadata = {
                     "generation_name": model_name, # set langfuse generation name
-                }
+                },
+                temperature=config.temperature,
+                max_tokens=config.max_tokens,
+                top_p=config.top_p,
+                response_format= {"type": "json_object"} if config.json_format == True else None
             )
 
         end_time = time.time()
@@ -275,7 +310,10 @@ async def messaging(request: MessageRequest):
     message = request.message
     openai_api_key = request.openai_api_key
     anthropic_api_key = request.anthropic_api_key
+    config = request.config
+    
     logging.info(f"Requested model name: {model_name}")
+    logging.info(f"Config: {config}")
     logging.info(f"Message: {message}")
     # Fetch models from Supabase
     models = await fetch_models_from_supabase()
@@ -285,36 +323,36 @@ async def messaging(request: MessageRequest):
     if openai_model and openai_api_key:
         logging.info(f"Using OpenAI provider with model_id: {openai_model['model_id']}")
         with temporary_env_var("OPENAI_API_KEY", openai_api_key):
-            return await handle_completion(openai_model['model_id'], message)
+            return await handle_completion(openai_model['model_id'], message, config=config)
 
     # Anthropic provider check
     anthropic_model = next((m for m in models if m["model_name"] == model_name and m["provider"] == "anthropic"), None)
     if anthropic_model and anthropic_api_key:
         logging.info(f"Using Anthropic provider with model_id: {anthropic_model['model_id']}")
         with temporary_env_var("ANTHROPIC_API_KEY", anthropic_api_key):
-            return await handle_completion(anthropic_model['model_id'], message)
+            return await handle_completion(anthropic_model['model_id'], message, config=config)
 
     # GitHub provider check
     github_model = next((m for m in models if m["model_name"] == model_name and m["provider"] == "github"), None)
     if github_model:
         logging.info(f"Using GitHub provider with model_id: {github_model['model_id']}")
         model_id = f"{github_model['model_id']}"
-        return await handle_completion(model_id, message)
+        return await handle_completion(model_id, message, config=config)
 
     # Hugging Face provider check
     huggingface_model = next((m for m in models if m["model_name"] == model_name and m["provider"] == "huggingface"), None)
     if huggingface_model:
         logging.info(f"Using Hugging Face provider with model_id: {huggingface_model['model_id']}")
         model_id = f"{huggingface_model['model_id']}"
-        return await handle_completion(model_id, message)
+        return await handle_completion(model_id, message, config=config)
 
     # Ollama provider check
     ollama_model = next((m for m in models if m["model_name"] == model_name and m["provider"] == "ollama"), None)
     if ollama_model:
         logging.info(f"Using Ollama provider with model_id: {ollama_model['model_id']}")
-        model_id = f"ollama/{ollama_model['model_id']}"
-        api_url = os.environ["OLLAMA_API_URL"]
-        return await handle_completion(model_id, message, api_base=api_url)
+        model_id = f"openai/{ollama_model['model_id']}"
+        api_url = "https://supa-dev--llm-comparison-api-ollama-api-dev.modal.run"
+        return await handle_completion(model_id, message, config=config, api_base=api_url)
 
     # Error handling
     model_info = next((m for m in models if m["model_name"] == model_name), None)

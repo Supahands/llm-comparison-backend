@@ -265,7 +265,7 @@ async def proxy(request: Request, path: str):
                 headers=dict(response.headers)
             )
 
-        if request.url.path in ("/api/generate", "/api/chat"):
+        if request.url.path in ("/v1/chat/completions"):
             return await _streaming_response()
         return await _response()
 

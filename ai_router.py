@@ -214,7 +214,7 @@ async def handle_completion(
                 model=model_name,
                 messages=[
                     {
-                        "content": config.system_prompt + ". Please generate the response in JSON" if config.json_format else "",  
+                        "content": config.system_prompt + (". Please generate the response in JSON" if config.json_format else ""),  
                         "role": "system",
                     },
                     {
@@ -238,7 +238,7 @@ async def handle_completion(
                 model=model_name,
                 messages=[
                     {
-                        "content": config.system_prompt + ". Please generate the response in JSON" if config.json_format else "", 
+                        "content": config.system_prompt + (". Please generate the response in JSON" if config.json_format else ""), 
                         "role": "system",
                     },
                     {

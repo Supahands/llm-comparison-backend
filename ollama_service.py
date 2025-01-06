@@ -15,34 +15,36 @@ logging.basicConfig(level=logging.INFO)
 
 # Default server port.
 MODEL_IDS: list[str] = [
-    "llama3",
-    "llama3.1",
-    "llama3.2",
+    # "llama3",
+    # "llama3.1",
+    # "llama3.2",
     "llama3.2:1b",
-    "llama3.3",
-    "tinyllama:1.1b",
-    "deepseek-coder-v2:16b",
-    "mistral",
-    "gemma2",
-    "qwen2.5",
-    "yi",
-    "qwq:32b",
-    "codellama:7b",
-    "codellama:70b",
-    "qwen2.5-coder:7b",
-    "qwen2.5-coder:32b",
-    "medllama2",
-    "meditron:7b",
-    "meditron:70b",
-    "mathstral:7b",
-    "athene-v2:72b",
-    "aisingapore/gemma2-9b-cpt-sea-lionv3-instruct",
-    "hf.co/Supa-AI/llama3-8b-cpt-sahabatai-v1-instruct-gguf:Q8_0",
-    "hf.co/Supa-AI/llama3-8b-cpt-sahabatai-v1-instruct-gguf:Q2_K",
-    "hf.co/Supa-AI/Ministral-8B-Instruct-2410-gguf:Q8_0",
-    "hf.co/Supa-AI/gemma2-9b-cpt-sahabatai-v1-instruct-q8_0-gguf",
-    "hf.co/Supa-AI/Mixtral-8x7B-Instruct-v0.1-gguf:Q8_0",
-    "hf.co/Supa-AI/malaysian-Llama-3.2-3B-Instruct-gguf:Q8_0"
+    # "llama3.3",
+    # "tinyllama:1.1b",
+    # "deepseek-coder-v2:16b",
+    # "mistral",
+    # "gemma2",
+    # "qwen2.5",
+    # "yi",
+    # "qwq:32b",
+    # "codellama:7b",
+    # "codellama:70b",
+    # "qwen2.5-coder:7b",
+    # "qwen2.5-coder:32b",
+    # "medllama2",
+    # "meditron:7b",
+    # "meditron:70b",
+    # "mathstral:7b",
+    # "athene-v2:72b",
+    "llama3.2-vision:11b",
+    "llama3.2-vision:90b",
+    # "aisingapore/gemma2-9b-cpt-sea-lionv3-instruct",
+    # "hf.co/Supa-AI/llama3-8b-cpt-sahabatai-v1-instruct-gguf:Q8_0",
+    # "hf.co/Supa-AI/llama3-8b-cpt-sahabatai-v1-instruct-gguf:Q2_K",
+    # "hf.co/Supa-AI/Ministral-8B-Instruct-2410-gguf:Q8_0",
+    # "hf.co/Supa-AI/gemma2-9b-cpt-sahabatai-v1-instruct-q8_0-gguf",
+    # "hf.co/Supa-AI/Mixtral-8x7B-Instruct-v0.1-gguf:Q8_0",
+    # "hf.co/Supa-AI/malaysian-Llama-3.2-3B-Instruct-gguf:Q8_0"
 ]
 
 OLLAMA_PORT: int = 11434
@@ -100,7 +102,7 @@ def update_model_db():
 
     # Fetch existing models from the database with provider 'ollama'
     response = (
-        supabase.table("available_models")
+        supabase.table("available_models_dev")
         .select("*")
         .eq("provider", "ollama")
         .execute()
@@ -120,14 +122,14 @@ def update_model_db():
     for model_name in models_to_add:
         data = {"provider": "ollama", "model_id": model_name, "model_name": model_name}
         print(f"Adding model to DB: {data}")
-        insert_response = supabase.table("available_models").insert(data).execute()
+        insert_response = supabase.table("available_models_dev").insert(data).execute()
         logging.info(f"Added model to DB: {insert_response.data}")
 
     # Remove outdated models
     for model_name in models_to_remove:
         print(f"Removing model from DB: {model_name}")
         delete_response = (
-            supabase.table("available_models")
+            supabase.table("available_models_dev")
             .delete()
             .eq("provider", "ollama")
             .eq("model_id", model_name)
@@ -138,7 +140,7 @@ def update_model_db():
 
 image = (
     Image.from_registry(
-        "ollama/ollama:latest",
+        "ollama/ollama:0.5.4",
         add_python="3.11",
     )
     .pip_install("requests")  # for healthchecks

@@ -234,7 +234,7 @@ async def handle_completion(
             for image in images:
                 messages[1]["content"].append({
                     "type": "image_url",
-                    "image_url": {"url": f"data:image/jpeg;base64,{image}"},
+                    "image_url": {"url": f"{image}"},
                 })
 
         if api_base:
@@ -335,28 +335,28 @@ async def messaging(request: MessageRequest):
     if openai_model and openai_api_key:
         logging.info(f"Using OpenAI provider with model_id: {openai_model['model_id']}")
         with temporary_env_var("OPENAI_API_KEY", openai_api_key):
-            return await handle_completion(openai_model['model_id'], message, config=config)
+            return await handle_completion(openai_model['model_id'], message, config=config, images=images)
 
     # Anthropic provider check
     anthropic_model = next((m for m in models if m["model_name"] == model_name and m["provider"] == "anthropic"), None)
     if anthropic_model and anthropic_api_key:
         logging.info(f"Using Anthropic provider with model_id: {anthropic_model['model_id']}")
         with temporary_env_var("ANTHROPIC_API_KEY", anthropic_api_key):
-            return await handle_completion(anthropic_model['model_id'], message, config=config)
+            return await handle_completion(anthropic_model['model_id'], message, config=config, images=images)
 
     # GitHub provider check
     github_model = next((m for m in models if m["model_name"] == model_name and m["provider"] == "github"), None)
     if github_model:
         logging.info(f"Using GitHub provider with model_id: {github_model['model_id']}")
         model_id = f"{github_model['model_id']}"
-        return await handle_completion(model_id, message, config=config)
+        return await handle_completion(model_id, message, config=config, images=images)
 
     # Hugging Face provider check
     huggingface_model = next((m for m in models if m["model_name"] == model_name and m["provider"] == "huggingface"), None)
     if huggingface_model:
         logging.info(f"Using Hugging Face provider with model_id: {huggingface_model['model_id']}")
         model_id = f"{huggingface_model['model_id']}"
-        return await handle_completion(model_id, message, config=config)
+        return await handle_completion(model_id, message, config=config, images=images)
 
     # Ollama provider check
     ollama_model = next((m for m in models if m["model_name"] == model_name and m["provider"] == "ollama"), None)

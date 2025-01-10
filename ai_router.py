@@ -181,7 +181,7 @@ class ModelInfo(BaseModel):
 
 async def fetch_models_from_supabase() -> List[dict]:
     logging.info("Fetching models from Supabase")
-    response = supabase.table("available_models_dev").select("*").execute()
+    response = supabase.table("available_models").select("*").execute()
     logging.info(f"Fetched {len(response.data)} models")
     return response.data
 

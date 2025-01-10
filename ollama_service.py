@@ -102,7 +102,7 @@ def update_model_db():
 
     # Fetch existing models from the database with provider 'ollama'
     response = (
-        supabase.table("available_models_dev")
+        supabase.table("available_models")
         .select("*")
         .eq("provider", "ollama")
         .execute()
@@ -122,14 +122,14 @@ def update_model_db():
     for model_name in models_to_add:
         data = {"provider": "ollama", "model_id": model_name, "model_name": model_name}
         print(f"Adding model to DB: {data}")
-        insert_response = supabase.table("available_models_dev").insert(data).execute()
+        insert_response = supabase.table("available_models").insert(data).execute()
         logging.info(f"Added model to DB: {insert_response.data}")
 
     # Remove outdated models
     for model_name in models_to_remove:
         print(f"Removing model from DB: {model_name}")
         delete_response = (
-            supabase.table("available_models_dev")
+            supabase.table("available_models")
             .delete()
             .eq("provider", "ollama")
             .eq("model_id", model_name)

@@ -36,6 +36,8 @@ MODEL_IDS: list[str] = [
     "meditron:70b",
     "mathstral:7b",
     "athene-v2:72b",
+    "llama3.2-vision:11b",
+    "llama3.2-vision:90b",
     "aisingapore/gemma2-9b-cpt-sea-lionv3-instruct",
     "hf.co/Supa-AI/llama3-8b-cpt-sahabatai-v1-instruct-gguf:Q8_0",
     "hf.co/Supa-AI/llama3-8b-cpt-sahabatai-v1-instruct-gguf:Q2_K",
@@ -138,7 +140,7 @@ def update_model_db():
 
 image = (
     Image.from_registry(
-        "ollama/ollama:latest",
+        "ollama/ollama:0.5.4",
         add_python="3.11",
     )
     .pip_install("requests")  # for healthchecks

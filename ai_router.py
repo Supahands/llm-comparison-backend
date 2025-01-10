@@ -166,6 +166,9 @@ class MessageRequest(BaseModel):
     openai_api_key: Optional[str] = Field(
         None, description="API key if required by the openai provider."
     )
+    images: Optional[List[str]] = Field(
+        None, description="Images if using multimodal model"
+    )
     anthropic_api_key: Optional[str] = Field(
         None, description="API key if required by the anthropic provider."
     )
@@ -203,25 +206,42 @@ def redact_words(model_name, text):
     return text
 
 async def handle_completion(
-    model_name: str, message: str, config: ModelConfig, api_base: Optional[str] = None,
+    model_name: str, 
+    message: str, 
+    config: ModelConfig, 
+    api_base: Optional[str] = None,
+    images: Optional[List[str]] = None,
 ):
     try:
         start_time = time.time()
+        
+        messages = [
+            {
+                "role": "system",
+                "content": config.system_prompt + (". Please generate the response in JSON" if config.json_format else ""),  
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": message,
+                    },
+                ], 
+            }
+        ]
+        if images:
+            for image in images:
+                messages[1]["content"].append({
+                    "type": "image_url",
+                    "image_url": {"url": f"{image}"},
+                })
 
         if api_base:
             logging.info(f"Using API base: {api_base}")
             response_obj = completion(
                 model=model_name,
-                messages=[
-                    {
-                        "content": config.system_prompt + (". Please generate the response in JSON" if config.json_format else ""),  
-                        "role": "system",
-                    },
-                    {
-                        "content": message, 
-                        "role": "user",
-                    }
-                ],
+                messages=messages,
                 api_base=api_base + "/v1",
                 timeout=180.00,
                 metadata = {
@@ -236,16 +256,7 @@ async def handle_completion(
         else:
             response_obj = completion(
                 model=model_name,
-                messages=[
-                    {
-                        "content": config.system_prompt + (". Please generate the response in JSON" if config.json_format else ""), 
-                        "role": "system",
-                    },
-                    {
-                        "content": message, 
-                        "role": "user",
-                    }
-                ],
+                messages=messages,
                 timeout=180.00,
                 metadata = {
                     "generation_name": model_name, # set langfuse generation name
@@ -311,6 +322,7 @@ async def messaging(request: MessageRequest):
     openai_api_key = request.openai_api_key
     anthropic_api_key = request.anthropic_api_key
     config = request.config
+    images = request.images
     
     logging.info(f"Requested model name: {model_name}")
     logging.info(f"Config: {config}")
@@ -323,28 +335,28 @@ async def messaging(request: MessageRequest):
     if openai_model and openai_api_key:
         logging.info(f"Using OpenAI provider with model_id: {openai_model['model_id']}")
         with temporary_env_var("OPENAI_API_KEY", openai_api_key):
-            return await handle_completion(openai_model['model_id'], message, config=config)
+            return await handle_completion(openai_model['model_id'], message, config=config, images=images)
 
     # Anthropic provider check
     anthropic_model = next((m for m in models if m["model_name"] == model_name and m["provider"] == "anthropic"), None)
     if anthropic_model and anthropic_api_key:
         logging.info(f"Using Anthropic provider with model_id: {anthropic_model['model_id']}")
         with temporary_env_var("ANTHROPIC_API_KEY", anthropic_api_key):
-            return await handle_completion(anthropic_model['model_id'], message, config=config)
+            return await handle_completion(anthropic_model['model_id'], message, config=config, images=images)
 
     # GitHub provider check
     github_model = next((m for m in models if m["model_name"] == model_name and m["provider"] == "github"), None)
     if github_model:
         logging.info(f"Using GitHub provider with model_id: {github_model['model_id']}")
         model_id = f"{github_model['model_id']}"
-        return await handle_completion(model_id, message, config=config)
+        return await handle_completion(model_id, message, config=config, images=images)
 
     # Hugging Face provider check
     huggingface_model = next((m for m in models if m["model_name"] == model_name and m["provider"] == "huggingface"), None)
     if huggingface_model:
         logging.info(f"Using Hugging Face provider with model_id: {huggingface_model['model_id']}")
         model_id = f"{huggingface_model['model_id']}"
-        return await handle_completion(model_id, message, config=config)
+        return await handle_completion(model_id, message, config=config, images=images)
 
     # Ollama provider check
     ollama_model = next((m for m in models if m["model_name"] == model_name and m["provider"] == "ollama"), None)
@@ -352,7 +364,7 @@ async def messaging(request: MessageRequest):
         logging.info(f"Using Ollama provider with model_id: {ollama_model['model_id']}")
         model_id = f"openai/{ollama_model['model_id']}"
         api_url = os.environ['OLLAMA_API_URL']
-        return await handle_completion(model_id, message, config=config, api_base=api_url)
+        return await handle_completion(model_id, message, config=config, api_base=api_url, images=images)
 
     # Error handling
     model_info = next((m for m in models if m["model_name"] == model_name), None)

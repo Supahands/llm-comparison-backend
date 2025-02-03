@@ -218,8 +218,7 @@ class OllamaClient:
     def __init__(self):
         self._client = None
     
-    @property
-    async def client(self) -> httpx.AsyncClient:
+    async def get_client(self) -> httpx.AsyncClient:
         if self._client is None or self._client.is_closed:
             self._client = httpx.AsyncClient(
                 base_url=OLLAMA_URL,
@@ -250,7 +249,7 @@ app = FastAPI(lifespan=lifespan)
 @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "HEAD"])
 async def proxy(request: Request, path: str):
     try:
-        client = await ollama_client.client
+        client = await ollama_client.get_client()
         url = httpx.URL(path=request.url.path, query=request.url.query.encode("utf-8"))
 
         async def _streaming_response():
@@ -306,7 +305,7 @@ async def proxy(request: Request, path: str):
         )
 
 @ollama_app.function(
-    gpu=gpu.A10G(count=2), 
+    gpu=gpu.L40S(count=2), 
     allow_concurrent_inputs=10, 
     concurrency_limit=1, 
     container_idle_timeout=1200,

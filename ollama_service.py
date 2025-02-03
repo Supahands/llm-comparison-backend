@@ -7,12 +7,13 @@ import logging
 
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import StreamingResponse
-from modal import gpu, Secret, Image
+from modal import gpu, Secret, Image, Volume 
 from contextlib import asynccontextmanager
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 
+volume = Volume.from_name("model-storage", create_if_missing=True)
 # Default server port.
 MODEL_IDS: list[str] = [
     "llama3",
@@ -38,6 +39,11 @@ MODEL_IDS: list[str] = [
     "athene-v2:72b",
     "llama3.2-vision:11b",
     "llama3.2-vision:90b",
+    # "deepseek-v3",
+    "deepseek-r1",
+    "deepseek-r1:70b",
+    "phi4",
+    "phi3:14b",
     "aisingapore/gemma2-9b-cpt-sea-lionv3-instruct",
     "hf.co/Supa-AI/llama3-8b-cpt-sahabatai-v1-instruct-gguf:Q8_0",
     "hf.co/Supa-AI/llama3-8b-cpt-sahabatai-v1-instruct-gguf:Q2_K",
@@ -88,7 +94,9 @@ def download_model():
 
     for model in MODEL_IDS:
         # Download all models
+        logging.info(f"{os.environ['OLLAMA_MODELS']}")
         _run_subprocess(["ollama", "pull", model])
+        volume.commit()
 
 
 def update_model_db():
@@ -140,9 +148,10 @@ def update_model_db():
 
 image = (
     Image.from_registry(
-        "ollama/ollama:0.5.4",
+        "ollama/ollama:0.5.5",
         add_python="3.11",
     )
+    .env({"OLLAMA_MODELS": "/root/models"})
     .pip_install("requests")  # for healthchecks
     .pip_install("httpx")  # for reverse proxy
     .pip_install("supabase")  # Supabase client
@@ -155,19 +164,24 @@ image = (
         [
             "RUN chmod a+x /opt/entrypoint.sh",
             'ENTRYPOINT ["/opt/entrypoint.sh"]',
+            'ENV OLLAMA_MODELS=/root/models'
         ]
     )
-    .run_function(download_model)
+    .workdir("/root/models")
+    .run_function(download_model, volumes={"/root/models": volume})
 )
-
 ollama_app = modal.App(
     "ollama-service",
     image=image,
     secrets=[
         Secret.from_name(
-            "SUPABASE_SECRETS"
-        )  # Ensure this secret contains SUPABASE_URL and SUPABASE_KEY
+            "SUPABASE_SECRETS",
+        ),
+        Secret.from_name(
+            "OLLAMA_MODELS",
+        )
     ],
+    volumes={"/root/models": volume}
 )
 with ollama_app.image.imports():
     import httpx
@@ -177,13 +191,25 @@ with ollama_app.image.imports():
 
     # Start Ollama server and make sure it is running before accepting inputs.
     _run_subprocess(["ollama", "serve"], block=False)
+    print("this is", os.environ["OLLAMA_MODELS"])
     while not _is_server_healthy():
         print("waiting for server to start ...")
         time.sleep(1)
 
     print("ollama server started!")
-
     update_model_db()
+@ollama_app.cls(
+    image=image,
+    secrets=[
+        Secret.from_name(
+            "SUPABASE_SECRETS",
+        ),
+        Secret.from_name(
+            "OLLAMA_MODELS",
+        )
+    ],
+    volumes={"/root/models": volume}
+)
 
 
 class OllamaClient:
@@ -280,7 +306,10 @@ async def proxy(request: Request, path: str):
         )
 
 @ollama_app.function(
-    gpu=gpu.A10G(count=2), allow_concurrent_inputs=10, concurrency_limit=1, container_idle_timeout=1200,
+    gpu=gpu.A10G(count=2), 
+    allow_concurrent_inputs=10, 
+    concurrency_limit=1, 
+    container_idle_timeout=1200,
 )
 @modal.asgi_app()
 def ollama_api():

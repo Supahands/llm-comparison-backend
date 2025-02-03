@@ -39,9 +39,11 @@ MODEL_IDS: list[str] = [
     "athene-v2:72b",
     "llama3.2-vision:11b",
     "llama3.2-vision:90b",
-    "deepseek-v3",
+    # "deepseek-v3",
+    "deepseek-r1",
+    "deepseek-r1:70b",
     "phi4",
-    "phi3:14b"
+    "phi3:14b",
     "aisingapore/gemma2-9b-cpt-sea-lionv3-instruct",
     "hf.co/Supa-AI/llama3-8b-cpt-sahabatai-v1-instruct-gguf:Q8_0",
     "hf.co/Supa-AI/llama3-8b-cpt-sahabatai-v1-instruct-gguf:Q2_K",

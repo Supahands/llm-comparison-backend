@@ -159,7 +159,7 @@ image = (
     .pip_install(
         "fastapi==0.115.0"
     )  # Set specific versions, as supabase requires pydantic >=2.5.0
-    .copy_local_file("./entrypoint.sh", "/opt/entrypoint.sh")
+    .add_local_file("./entrypoint.sh", "/opt/entrypoint.sh")
     .dockerfile_commands(
         [
             "RUN chmod a+x /opt/entrypoint.sh",

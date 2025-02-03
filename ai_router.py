@@ -363,8 +363,8 @@ async def messaging(request: MessageRequest):
     if ollama_model:
         logging.info(f"Using Ollama provider with model_id: {ollama_model['model_id']}")
         model_id = f"openai/{ollama_model['model_id']}"
-        # api_url = os.environ['OLLAMA_API_URL']
-        api_url = "https://supa-dev--llm-comparison-api-ollama-api-dev.modal.run"
+        api_url = os.environ['OLLAMA_API_URL']
+        # api_url = "https://supa-dev--llm-comparison-api-ollama-api-dev.modal.run" # Uncomment to allow served version to be used instead
         return await handle_completion(model_id, message, config=config, api_base=api_url, images=images)
 
     # Error handling

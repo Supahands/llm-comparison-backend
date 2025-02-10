@@ -22,6 +22,7 @@ MODEL_IDS: list[str] = [
     "llama3.3",
     "tinyllama:1.1b",
     "deepseek-coder-v2:16b",
+    "deepseek-r1:1.5b",
     "mistral",
     "gemma2",
     "qwen2.5",

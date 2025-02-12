@@ -261,7 +261,15 @@ Examples of invalid tags: 'risk-assessment', 'logical reasoning', 'problem_solvi
         }
 
         if api_base:
-            completion_kwargs["api_base"] = api_base
+            # For Ollama's OpenAI-compatible endpoint, ensure we use the correct path and provide a dummy API key
+            if "openai" in model_name.lower():
+                # Ensure the base URL points to /v1 endpoint
+                if not api_base.endswith('/v1'):
+                    api_base = f"{api_base.rstrip('/')}/v1"
+                completion_kwargs["api_base"] = api_base
+                completion_kwargs["api_key"] = "ollama"  # Required but not validated by Ollama
+            else:
+                completion_kwargs["api_base"] = api_base
 
         if output_struct:
             # Convert Pydantic model to JSON schema
@@ -283,7 +291,7 @@ Examples of invalid tags: 'risk-assessment', 'logical reasoning', 'problem_solvi
             response_obj.choices[
                 0
             ].message.content = "Sorry, I couldn't answer this question :("
-        else:
+        else:   
             response_obj.choices[0].message.content = redact_words(model_name, content)
 
         # Convert the usage object
@@ -401,7 +409,7 @@ async def route_model_request(
     )
     if ollama_model:
         logging.info(f"Using Ollama provider with model_id: {ollama_model['model_id']}")
-        model_id = f"ollama/{ollama_model['model_id']}"
+        model_id = f"openai/{ollama_model['model_id']}"
         # api_url = os.environ["OLLAMA_API_URL"]
         api_url = "https://supa-dev--llm-comparison-api-ollama-api-dev.modal.run"
         return await handle_completion(model_id, message, api_base=api_url, output_struct=output_struct)

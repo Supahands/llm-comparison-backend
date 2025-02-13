@@ -445,6 +445,9 @@ def get_required_tag_count(question: Optional[Question]) -> int:
         return 1
     if not question.tags:
         return 1
+    # Limit to 5 tags total (input tags + 1 new tag)
+    if len(question.tags) >= 4:
+        return 5
     return len(question.tags) + 1
 
 @web_app.post("/question_generation")
@@ -517,9 +520,10 @@ Requirements:
 
 {tag_requirements}"""
     else:
-        tag_list = ", ".join([f'"{tag}"' for tag in request.input_question.tags])
-        new_tag_count = len(request.input_question.tags) + 1
-        tag_placeholders = ", ".join([f'"tag{i}"' for i in range(1, new_tag_count + 1)])
+        # Get original tags, limiting to first 4 if more are provided
+        original_tags = request.input_question.tags[:4]
+        tag_list = ", ".join([f'"{tag}"' for tag in original_tags])
+        new_tag_count = min(len(original_tags) + 1, 5)
         
         message = f"""Analyze this tagged question and generate 4 related questions with additional detail.
 
@@ -533,21 +537,31 @@ Required JSON Schema:
     "questions": [
         {{
             "question": "The question text goes here",
-            "tags": [{tag_placeholders}]
+            "tags": [{tag_list}, "additionalTag"]  // Original tags plus one new tag
         }}
     ]
 }}
 
 Requirements:
 - Generate 4 new questions related to the input question
-- Each question MUST have exactly {new_tag_count} tags
-- First tag should be the primary capability
-- Additional tags should provide more specific details about the question
+- Each question MUST have exactly {new_tag_count} tags total
+- PRESERVE ALL original tags: [{tag_list}] in the exact same order
+- Add EXACTLY ONE NEW complementary tag at the end of the tag list
+- The new tag should describe a specific capability or aspect being tested
+- Maximum of 5 tags total allowed
+- If input has 4 tags already, new tag should be a refinement of the last tag
 - Build upon the theme of the input question
 - Explore different aspects while maintaining thematic connection
 - No harmful topics
 
-{tag_requirements}"""
+{tag_requirements}
+
+CRITICAL:
+- Keep original tags [{tag_list}] in their exact order
+- Add exactly ONE new tag at the end
+- Total tag count must be {new_tag_count} (maximum 5)
+- Do not modify or remove any original tags
+- If input has 4+ tags, new tag should refine/specialize the last tag"""
 
     return await route_model_request(
         request.model,

@@ -6,8 +6,9 @@ from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from contextlib import contextmanager
-from modal import Image, App, asgi_app, Secret, gpu
+from modal import Image, App, asgi_app, Secret
 from const import LIST_OF_REDACTED_WORDS
+import json
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -171,7 +172,7 @@ class Question(BaseModel):
 
 class QuestionGenerationRequest(BaseModel):
     model: str = Field(..., description="Name of the model to use.")
-    question: Optional[Question] = Field(None, description="Single question with optional tags")
+    input_question: Optional[Question] = Field(None, description="Single question with optional tags")
     openai_api_key: Optional[str] = Field(None, description="API key if required by the openai provider.")
     anthropic_api_key: Optional[str] = Field(None, description="API key if required by the anthropic provider.")
 
@@ -246,11 +247,13 @@ async def handle_completion(
             "messages": [
                 {
                     "role": "system",
-                    "content": """You are a JSON-only API. Always respond with valid JSON matching the required schema. 
+                    "content": """You are a helpful AI assistant.""" if not output_struct else
+                    """You are a JSON-only API. Always respond with valid JSON matching the required schema. 
 Never include explanatory text outside the JSON structure.
-IMPORTANT: Tags must be single words only - no hyphens, no spaces, no special characters.
-Examples of valid tags: 'reasoning', 'analysis', 'mathematics'
-Examples of invalid tags: 'risk-assessment', 'logical reasoning', 'problem_solving'"""
+CRITICAL: Response must be a valid JSON object, not a string containing JSON.
+CRITICAL REQUIREMENT: Each question must have EXACTLY the number of tags specified in the prompt.
+For initial questions with no input, use EXACTLY ONE tag per question.
+Never provide more tags than requested."""
                 },
                 {"role": "user", "content": message}
             ],
@@ -259,6 +262,15 @@ Examples of invalid tags: 'risk-assessment', 'logical reasoning', 'problem_solvi
                 "generation_name": model_name,
             },
         }
+
+        # Only add JSON schema validation for question generation endpoint
+        if output_struct:
+            json_schema = output_struct.model_json_schema()
+            completion_kwargs["response_format"] = {
+                "type": "json_schema",
+                "schema": json_schema,
+                "strict": True
+            }
 
         if api_base:
             # For Ollama's OpenAI-compatible endpoint, ensure we use the correct path and provide a dummy API key
@@ -437,7 +449,7 @@ def get_required_tag_count(question: Optional[Question]) -> int:
 
 @web_app.post("/question_generation")
 async def question_generation(request: QuestionGenerationRequest):
-    required_tag_count = get_required_tag_count(request.question)
+    required_tag_count = get_required_tag_count(request.input_question)
 
     tag_requirements = """
 Tag Requirements:
@@ -456,7 +468,7 @@ Tag Requirements:
   * 'logical_reasoning'
   * 'problem solving'"""
 
-    if not request.question:
+    if not request.input_question:
         message = f"""Generate 4 diverse questions for evaluating language models.
 
 Required JSON Schema:
@@ -464,31 +476,33 @@ Required JSON Schema:
     "questions": [
         {{
             "question": "The question text goes here",
-            "tags": ["capability"]
+            "tags": ["capability"]  // EXACTLY ONE TAG PER QUESTION - NO EXCEPTIONS
         }}
     ]
 }}
 
-Requirements:
-- Each question MUST have exactly 1 tag
-- Use fundamental categories (reasoning, creativity, knowledge, logic)
-- Clear questions
-- Tags should represent core capabilities
-- Challenging but answerable
-- No harmful topics
+STRICT Requirements:
+1. Each question MUST have EXACTLY ONE TAG - no more, no less
+2. Use these categories only: reasoning, creativity, knowledge, logic, analysis
+3. Clear questions
+4. Tags must be single words
+5. Challenging but answerable
+6. No harmful topics
 
-{tag_requirements}"""
+{tag_requirements}
 
-    elif not request.question.tags:
+CRITICAL: Any response with more than one tag per question will be rejected."""
+
+    elif not request.input_question.tags:
         message = f"""Analyze this question and generate 4 related questions.
 
-Input Question: "{request.question.question}"
+Input Question: "{request.input_question.question}"
 
 Required JSON Schema:
 {{
     "questions": [
         {{
-            "question": "{request.question.question}",
+            "question": "{request.input_question.question}",
             "tags": ["primaryCapability"]
         }}
     ]
@@ -503,14 +517,14 @@ Requirements:
 
 {tag_requirements}"""
     else:
-        tag_list = ", ".join([f'"{tag}"' for tag in request.question.tags])
-        new_tag_count = len(request.question.tags) + 1
+        tag_list = ", ".join([f'"{tag}"' for tag in request.input_question.tags])
+        new_tag_count = len(request.input_question.tags) + 1
         tag_placeholders = ", ".join([f'"tag{i}"' for i in range(1, new_tag_count + 1)])
         
         message = f"""Analyze this tagged question and generate 4 related questions with additional detail.
 
 Input Question: {{
-    "question": "{request.question.question}",
+    "question": "{request.input_question.question}",
     "tags": [{tag_list}]
 }}
 

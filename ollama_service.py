@@ -83,7 +83,7 @@ def _is_server_healthy() -> bool:
         else:
             print(f"ollama server not running => {OLLAMA_URL}")
             return False
-    except requests.RequestException as e:
+    except requests.RequestException:
         return False
 
 
@@ -307,10 +307,11 @@ async def proxy(request: Request, path: str):
         )
 
 @ollama_app.function(
-    gpu=gpu.A10G(count=2), 
+    gpu=gpu.A100(count=3), 
     allow_concurrent_inputs=10, 
     concurrency_limit=1, 
     container_idle_timeout=1200,
+    enable_memory_snapshot=True
 )
 @modal.asgi_app()
 def ollama_api():

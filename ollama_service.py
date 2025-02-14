@@ -23,6 +23,7 @@ MODEL_IDS: list[str] = [
     "llama3.3",
     "tinyllama:1.1b",
     "deepseek-coder-v2:16b",
+    "deepseek-r1:1.5b",
     "mistral",
     "gemma2",
     "qwen2.5",
@@ -82,7 +83,7 @@ def _is_server_healthy() -> bool:
         else:
             print(f"ollama server not running => {OLLAMA_URL}")
             return False
-    except requests.RequestException as e:
+    except requests.RequestException:
         return False
 
 
@@ -219,7 +220,7 @@ class OllamaClient:
         self._client = None
     
     @property
-    async def client(self) -> httpx.AsyncClient:
+    def client(self) -> httpx.AsyncClient:
         if self._client is None or self._client.is_closed:
             self._client = httpx.AsyncClient(
                 base_url=OLLAMA_URL,
@@ -250,7 +251,7 @@ app = FastAPI(lifespan=lifespan)
 @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "HEAD"])
 async def proxy(request: Request, path: str):
     try:
-        client = await ollama_client.client
+        client = ollama_client.client  
         url = httpx.URL(path=request.url.path, query=request.url.query.encode("utf-8"))
 
         async def _streaming_response():
@@ -300,16 +301,17 @@ async def proxy(request: Request, path: str):
     except Exception as e:
         logging.error(f"Proxy error: {str(e)}")
         return Response(
-            content={"error": str(e)},
+            content=str({"error": str(e)}).encode(),  # Encode the JSON string
             status_code=500,
             media_type="application/json"
         )
 
 @ollama_app.function(
-    gpu=gpu.A10G(count=2), 
+    gpu=gpu.A100(count=3), 
     allow_concurrent_inputs=10, 
     concurrency_limit=1, 
     container_idle_timeout=1200,
+    enable_memory_snapshot=True
 )
 @modal.asgi_app()
 def ollama_api():

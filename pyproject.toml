@@ -13,6 +13,7 @@ modal = "^0.64.207"
 litellm = "^1.50.2"
 supabase = "^2.9.1"
 openai = "^1.52.2"
+httpx = "^0.28.1"
 
 [tool.poetry.group.dev.dependencies]
 ruff = "^0.7.0"

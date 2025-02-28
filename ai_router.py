@@ -278,7 +278,7 @@ Never provide more tags than requested."""
             json_schema = output_struct.model_json_schema()
             completion_kwargs["response_format"] = {
                 "type": "json_schema",
-                "schema": json_schema,
+                "json_schema": json_schema,
                 "strict": True
             }
 
@@ -469,14 +469,15 @@ def get_required_tag_count(question: Optional[Question]) -> int:
 async def question_generation(request: QuestionGenerationRequest):
     required_tag_count = get_required_tag_count(request.input_question)
 
-    # Make the system prompt more explicitly focused on tag count accuracy
-    system_prompt = f"""You are a precise AI assistant that follows instructions exactly.
+    # Modified system prompt to prefer concise questions
+    system_prompt = f"""You are a precise AI assistant that creates clear, focused questions.
 When generating questions with tags:
 1. ALWAYS use EXACTLY {required_tag_count} tag(s) per question - no more, no fewer
-2. Tags can be simple words OR short phrases (up to 5 words maximum)
-3. Format your response as a valid JSON object with the structure requested
-4. DO NOT include any explanations outside of the JSON structure
-5. Be concise and direct"""
+2. Create concise questions that are only as detailed as necessary
+3. Only use paragraph-length when complexity truly requires it
+4. Format your response as a valid JSON object with the structure requested
+5. Each question should be direct and to the point
+6. Tags can be simple words OR short phrases (up to 5 words maximum)"""
 
     tag_requirements = """
 Tag Requirements:
@@ -485,7 +486,14 @@ Tag Requirements:
 - Tags can be single words OR short phrases (maximum 5 words)
 - First tag should represent the primary capability/category
 - Additional tags should add specificity
-- Valid examples: "reasoning", "creative writing", "world history knowledge", "logical problem solving", "analysis of literature"
+
+Question Quality Requirements:
+- Questions should be concise yet detailed enough to be clear
+- Only use paragraph-length when the complexity truly requires it
+- Include necessary context, but be as brief as possible
+- Provide clear instructions on what's expected
+- Focus on topics where AI can demonstrate reasoning, creativity, or knowledge
+- Avoid unnecessary verbosity or filler text
 """
 
     if not request.input_question:
@@ -495,7 +503,7 @@ Required JSON Schema:
 {
     "questions": [
         {
-            "question": "The question text goes here",
+            "question": "Concise question text that's only as detailed as necessary",
             "tags": ["capability"] // EXACTLY ONE TAG - NO EXCEPTIONS
         },
         ... // 3 more questions, each with EXACTLY ONE TAG
@@ -504,10 +512,15 @@ Required JSON Schema:
 
 CRITICAL REQUIREMENTS:
 1. Each question MUST have EXACTLY ONE TAG - no exceptions
-2. Tags can be words or short phrases (up to 5 words)
-3. Choose categories like: reasoning, creativity, knowledge, logic, analysis, problem solving, etc.
-4. Questions should be clear and challenging
-5. NO harmful topics
+2. Questions should be concise yet detailed enough to be clear
+3. Only use paragraph-length for complex topics that require it
+4. Keep questions focused and to the point
+5. Create questions that test different cognitive abilities:
+   - One testing analytical reasoning
+   - One testing creative thinking
+   - One testing knowledge application
+   - One testing logical problem solving
+6. NO questions requiring very recent information or real-time data
 
 DOUBLE CHECK: I need EXACTLY 4 questions, each with EXACTLY 1 tag.
 """
@@ -530,8 +543,11 @@ Required JSON Schema:
 
 CRITICAL REQUIREMENTS:
 1. First question must be the input question with one appropriate tag
-2. Each question MUST have EXACTLY ONE TAG - no exceptions
-3. DOUBLE CHECK the tag count before submitting
+2. Generate 3 additional related questions that explore similar themes or concepts
+3. Each question MUST have EXACTLY ONE TAG - no exceptions
+4. Keep questions concise yet clear and focused
+5. Only use paragraph-length if absolutely necessary for clarity
+6. Questions should be direct and to the point
 
 {tag_requirements}"""
     else:
@@ -551,7 +567,7 @@ Required JSON Schema:
 {{
     "questions": [
         {{
-            "question": "New question 1",
+            "question": "Concise question that provides necessary context and clear instructions",
             "tags": [{tag_list}, "additionalTag"] // EXACTLY {new_tag_count} tags
         }},
         ... // 3 more questions, each with EXACTLY {new_tag_count} tags
@@ -562,16 +578,19 @@ CRITICAL REQUIREMENTS:
 1. EVERY question MUST have EXACTLY {new_tag_count} tags total
 2. Keep ALL original tags: [{tag_list}] in the EXACT SAME order
 3. Add EXACTLY ONE NEW relevant tag at the end (word or short phrase up to 5 words)
-4. Questions must relate to the input theme
+4. Make questions concise yet clear and detailed:
+   - Only as long as necessary to provide context and instructions
+   - Use paragraph-length ONLY when complexity truly requires it
+   - Prefer shorter, more focused questions when possible
+5. Questions must be related to the input theme but explore different aspects
 
 DOUBLE-CHECK: Count the tags for each question - there should be EXACTLY {new_tag_count} tags per question."""
 
-    # Fix: Send a string message rather than a structured message array
     message_text = f"{system_prompt}\n\n{message}"
     
     return await route_model_request(
         model_name=request.model,
-        message=message_text,  # Pass as a single string
+        message=message_text,  
         openai_api_key=request.openai_api_key,
         anthropic_api_key=request.anthropic_api_key,
         output_struct=QuestionResponse

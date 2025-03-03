@@ -13,6 +13,8 @@ from contextlib import asynccontextmanager
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 
+
+
 volume = Volume.from_name("model-storage", create_if_missing=True)
 # Default server port.
 MODEL_IDS: list[str] = [
@@ -21,11 +23,18 @@ MODEL_IDS: list[str] = [
     "llama3.2",
     "llama3.2:1b",
     "llama3.3",
+    "llama3.2-vision:11b",
+    "llama3.2-vision:11b-instruct-q8_0",
+    "llama3.2-vision:90b",
+    "llama3.2:3b-instruct-q8_0",
+    "llama3.3:70b-instruct-q2_K",
+    "llama3.3:70b-instruct-q6_K",
     "tinyllama:1.1b",
     "deepseek-coder-v2:16b",
     "deepseek-r1:1.5b",
     "mistral",
     "gemma2",
+    "gemma2:27b-instruct-q8_0",
     "qwen2.5",
     "yi",
     "qwq:32b",
@@ -38,11 +47,9 @@ MODEL_IDS: list[str] = [
     "meditron:70b",
     "mathstral:7b",
     "athene-v2:72b",
-    "llama3.2-vision:11b",
-    "llama3.2-vision:90b",
     # "deepseek-v3",
     "deepseek-r1",
-    "deepseek-r1:70b",
+    # "deepseek-r1:70b",
     "phi4",
     "phi3:14b",
     "aisingapore/gemma2-9b-cpt-sea-lionv3-instruct",
@@ -171,6 +178,8 @@ image = (
     .workdir("/root/models")
     .run_function(download_model, volumes={"/root/models": volume})
 )
+
+image_with_source = image.add_local_python_source("deploy")
 ollama_app = modal.App(
     "ollama-service",
     image=image,
@@ -307,7 +316,7 @@ async def proxy(request: Request, path: str):
         )
 
 @ollama_app.function(
-    gpu=gpu.A100(count=3), 
+    gpu="L40S:3", 
     allow_concurrent_inputs=10, 
     concurrency_limit=1, 
     container_idle_timeout=1200,

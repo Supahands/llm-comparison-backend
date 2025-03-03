@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 from contextlib import contextmanager
 from modal import Image, App, asgi_app, Secret
 from const import LIST_OF_REDACTED_WORDS
-import json
+import re
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -47,6 +47,7 @@ llm_compare_app = App(
         Secret.from_name("llm_comparison_github"),
         Secret.from_name("my-huggingface-secret"),
         Secret.from_name("Langfuse-Secret"),
+        Secret.from_name("cloudflare-developers"),
     ],
 )
 
@@ -58,6 +59,7 @@ with llm_compare_app.image.imports():
     import re
 
     litellm.set_verbose = True
+    litellm.drop_params=True
     litellm.success_callback = ["langfuse"]
     litellm.failure_callback = ["langfuse"]  # logs errors to langfuse
 
@@ -172,9 +174,18 @@ class Question(BaseModel):
 
 class QuestionGenerationRequest(BaseModel):
     model: str = Field(..., description="Name of the model to use.")
-    input_question: Optional[Question] = Field(None, description="Single question with optional tags")
-    openai_api_key: Optional[str] = Field(None, description="API key if required by the openai provider.")
-    anthropic_api_key: Optional[str] = Field(None, description="API key if required by the anthropic provider.")
+    input_question: Optional[Question] = Field(
+        None, description="Single question with optional tags"
+    )
+    tag_limit: Optional[int] = Field(
+        None, description="Maximum number of tags to use for generated questions"
+    )
+    openai_api_key: Optional[str] = Field(
+        None, description="API key if required by the openai provider."
+    )
+    anthropic_api_key: Optional[str] = Field(
+        None, description="API key if required by the anthropic provider."
+    )
 
 
 class ModelInfo(BaseModel):
@@ -192,14 +203,13 @@ class QuestionResponse(BaseModel):
 
     model_config = {
         "json_schema_extra": {
-            "examples": [{
-                "questions": [
-                    {
-                        "question": "Example question text",
-                        "tags": ["example_tag"]
-                    }
-                ]
-            }]
+            "examples": [
+                {
+                    "questions": [
+                        {"question": "Example question text", "tags": ["example_tag"]}
+                    ]
+                }
+            ]
         }
     }
 
@@ -234,6 +244,17 @@ def redact_words(model_name, text):
     return text
 
 
+def strip_thinking_tags(content: str) -> str:
+    """Strip <think>...</think> tags and their contents from the response. WIP"""
+    if isinstance(content, str):
+        # Pattern to match <think>...</think> including newlines
+        pattern = r"<think>[\s\S]*?</think>"
+        # Remove all instances of the pattern
+        cleaned_content = re.sub(pattern, "", content)
+        return cleaned_content
+    return content
+
+
 async def handle_completion(
     model_name: str,
     message: str,
@@ -247,15 +268,16 @@ async def handle_completion(
             "messages": [
                 {
                     "role": "system",
-                    "content": """You are a helpful AI assistant.""" if not output_struct else
-                    """You are a JSON-only API. Always respond with valid JSON matching the required schema. 
+                    "content": """You are a helpful AI assistant."""
+                    if not output_struct
+                    else """You are a JSON-only API. Always respond with valid JSON matching the required schema. 
 Never include explanatory text outside the JSON structure.
 CRITICAL: Response must be a valid JSON object, not a string containing JSON.
 CRITICAL REQUIREMENT: Each question must have EXACTLY the number of tags specified in the prompt.
 For initial questions with no input, use EXACTLY ONE tag per question.
-Never provide more tags than requested."""
+Never provide more tags than requested.""",
                 },
-                {"role": "user", "content": message}
+                {"role": "user", "content": message},
             ],
             "timeout": 180.00,
             "metadata": {
@@ -268,18 +290,20 @@ Never provide more tags than requested."""
             json_schema = output_struct.model_json_schema()
             completion_kwargs["response_format"] = {
                 "type": "json_schema",
-                "schema": json_schema,
-                "strict": True
+                "json_schema": json_schema,
+                "strict": True,
             }
 
         if api_base:
             # For Ollama's OpenAI-compatible endpoint, ensure we use the correct path and provide a dummy API key
             if "openai" in model_name.lower():
                 # Ensure the base URL points to /v1 endpoint
-                if not api_base.endswith('/v1'):
+                if not api_base.endswith("/v1"):
                     api_base = f"{api_base.rstrip('/')}/v1"
                 completion_kwargs["api_base"] = api_base
-                completion_kwargs["api_key"] = "ollama"  # Required but not validated by Ollama
+                completion_kwargs["api_key"] = (
+                    "ollama"  # Required but not validated by Ollama
+                )
             else:
                 completion_kwargs["api_base"] = api_base
 
@@ -289,7 +313,7 @@ Never provide more tags than requested."""
             completion_kwargs["response_format"] = {
                 "type": "json_schema",
                 "schema": json_schema,
-                "strict": True
+                "strict": True,
             }
 
         response_obj = completion(**completion_kwargs)
@@ -303,7 +327,12 @@ Never provide more tags than requested."""
             response_obj.choices[
                 0
             ].message.content = "Sorry, I couldn't answer this question :("
-        else:   
+        else:
+            # Strip thinking tags specifically for question generation responses
+            if output_struct == QuestionResponse and isinstance(content, str):
+                content = strip_thinking_tags(content)
+
+            # Apply redaction
             response_obj.choices[0].message.content = redact_words(model_name, content)
 
         # Convert the usage object
@@ -315,39 +344,25 @@ Never provide more tags than requested."""
         logging.error(f"Error during completion: {error_msg}")
         error_response = {
             "questions": [
-                {
-                    "question": "Error occurred during completion",
-                    "tags": ["error"]
-                }
+                {"question": "Error occurred during completion", "tags": ["error"]}
             ]
         }
-        raise HTTPException(
-            status_code=500,
-            detail=error_response
-        )
+        raise HTTPException(status_code=500, detail=error_response)
     except Exception as e:
         error_msg = str(e)
         logging.error(f"Unexpected error during completion: {error_msg}")
         error_response = {
-            "questions": [
-                {
-                    "question": "Unexpected error occurred",
-                    "tags": ["error"]
-                }
-            ]
+            "questions": [{"question": "Unexpected error occurred", "tags": ["error"]}]
         }
-        raise HTTPException(
-            status_code=500,
-            detail=error_response
-        )
+        raise HTTPException(status_code=500, detail=error_response)
 
 
 async def route_model_request(
     model_name: str,
-    message: str,
+    message: str,  # Expecting a string message
     openai_api_key: Optional[str] = None,
     anthropic_api_key: Optional[str] = None,
-    output_struct: Optional[str] = None,
+    output_struct: Optional[BaseModel] = None,
 ):
     """Route the request to the appropriate model provider and handle API keys."""
     models = await fetch_models_from_supabase()
@@ -364,7 +379,9 @@ async def route_model_request(
     if openai_model and openai_api_key:
         logging.info(f"Using OpenAI provider with model_id: {openai_model['model_id']}")
         with temporary_env_var("OPENAI_API_KEY", openai_api_key):
-            return await handle_completion(openai_model["model_id"], message, output_struct=output_struct)
+            return await handle_completion(
+                openai_model["model_id"], message, output_struct=output_struct
+            )
 
     # Anthropic provider check
     anthropic_model = next(
@@ -380,7 +397,24 @@ async def route_model_request(
             f"Using Anthropic provider with model_id: {anthropic_model['model_id']}"
         )
         with temporary_env_var("ANTHROPIC_API_KEY", anthropic_api_key):
-            return await handle_completion(anthropic_model["model_id"], message, output_struct=output_struct)
+            return await handle_completion(
+                anthropic_model["model_id"], message, output_struct=output_struct
+            )
+
+    cloudflare_model = next(
+        (
+            m
+            for m in models
+            if m["model_name"] == model_name and m["provider"] == "cloudflare"
+        ),
+        None,
+    )
+    if cloudflare_model:
+        logging.info(
+            f"Using Cloudflare provider with model_id: {cloudflare_model['model_id']}"
+        )
+        model_id = f"cloudflare/{cloudflare_model['model_id']}"
+        return await handle_completion(model_id, message, output_struct=output_struct)
 
     # GitHub provider check
     github_model = next(
@@ -393,7 +427,9 @@ async def route_model_request(
     )
     if github_model:
         logging.info(f"Using GitHub provider with model_id: {github_model['model_id']}")
-        return await handle_completion(github_model["model_id"], message, output_struct=output_struct)
+        return await handle_completion(
+            github_model["model_id"], message, output_struct=output_struct
+        )
 
     # Hugging Face provider check
     huggingface_model = next(
@@ -408,7 +444,9 @@ async def route_model_request(
         logging.info(
             f"Using Hugging Face provider with model_id: {huggingface_model['model_id']}"
         )
-        return await handle_completion(huggingface_model["model_id"], message, output_struct=output_struct)
+        return await handle_completion(
+            huggingface_model["model_id"], message, output_struct=output_struct
+        )
 
     # Ollama provider check
     ollama_model = next(
@@ -422,9 +460,11 @@ async def route_model_request(
     if ollama_model:
         logging.info(f"Using Ollama provider with model_id: {ollama_model['model_id']}")
         model_id = f"openai/{ollama_model['model_id']}"
-        # api_url = os.environ["OLLAMA_API_URL"]
-        api_url = "https://supa-dev--llm-comparison-api-ollama-api-dev.modal.run"
-        return await handle_completion(model_id, message, api_base=api_url, output_struct=output_struct)
+        api_url = os.environ["OLLAMA_API_URL"]
+        # api_url = "https://supa-dev--llm-comparison-api-ollama-api-dev.modal.run"
+        return await handle_completion(
+            model_id, message, api_base=api_url, output_struct=output_struct
+        )
 
     # Error handling
     model_info = next((m for m in models if m["model_name"] == model_name), None)
@@ -439,62 +479,81 @@ async def route_model_request(
         raise HTTPException(status_code=400, detail="Provider not supported")
 
 
-def get_required_tag_count(question: Optional[Question]) -> int:
+def get_required_tag_count(question: Optional[Question], tag_limit: Optional[int] = None) -> int:
     """Determine the number of tags required based on input question."""
+    # Default tag limit if none provided
+    if tag_limit is None:
+        tag_limit = 5
+        
     if not question:
         return 1
     if not question.tags:
         return 1
-    # Limit to 5 tags total (input tags + 1 new tag)
-    if len(question.tags) >= 4:
-        return 5
+    # Limit to n tags total (input tags + 1 new tag)
+    if len(question.tags) >= tag_limit - 1:
+        return tag_limit
     return len(question.tags) + 1
+
 
 @web_app.post("/question_generation")
 async def question_generation(request: QuestionGenerationRequest):
-    required_tag_count = get_required_tag_count(request.input_question)
+    required_tag_count = get_required_tag_count(request.input_question, request.tag_limit)
+
+    # Modified system prompt to prefer concise questions
+    system_prompt = f"""You are a precise AI assistant that creates clear, focused questions.
+When generating questions with tags:
+1. ALWAYS use EXACTLY {required_tag_count} tag(s) per question - no more, no fewer
+2. Create concise questions that are only as detailed as necessary
+3. Only use paragraph-length when complexity truly requires it
+4. Format your response as a valid JSON object with the structure requested
+5. Each question should be direct and to the point
+6. Tags can be simple words OR short phrases (up to 5 words maximum)"""
 
     tag_requirements = """
 Tag Requirements:
-- Tags MUST be SINGLE WORDS ONLY
-- NO hyphens, spaces, or special characters
-- NO compound words or phrases
-- Each tag should be a simple category word
-- First tag is broadest category
-- Additional tags narrow down the category
-- Valid examples:
-  * 'reasoning'
-  * ['logic', 'mathematics']
-  * ['science', 'physics', 'mechanics']
-- Invalid examples:
-  * 'risk-assessment'
-  * 'logical_reasoning'
-  * 'problem solving'"""
+- EVERY question MUST have EXACTLY the specified number of tags
+- Tags should be clear, relevant, and concise
+- Tags can be single words OR short phrases (maximum 5 words)
+- First tag should represent the primary capability/category
+- Additional tags should add specificity
+
+Question Quality Requirements:
+- Questions should be concise yet detailed enough to be clear
+- Only use paragraph-length when the complexity truly requires it
+- Include necessary context, but be as brief as possible
+- Provide clear instructions on what's expected
+- Focus on topics where AI can demonstrate reasoning, creativity, or knowledge
+- Avoid unnecessary verbosity or filler text
+"""
 
     if not request.input_question:
-        message = f"""Generate 4 diverse questions for evaluating language models.
+        message = """Generate 4 diverse questions for evaluating language models.
 
 Required JSON Schema:
-{{
+{
     "questions": [
-        {{
-            "question": "The question text goes here",
-            "tags": ["capability"]  // EXACTLY ONE TAG PER QUESTION - NO EXCEPTIONS
-        }}
+        {
+            "question": "Concise question text that's only as detailed as necessary",
+            "tags": ["capability"] // EXACTLY ONE TAG - NO EXCEPTIONS
+        },
+        ... // 3 more questions, each with EXACTLY ONE TAG
     ]
-}}
+}
 
-STRICT Requirements:
-1. Each question MUST have EXACTLY ONE TAG - no more, no less
-2. Use these categories only: reasoning, creativity, knowledge, logic, analysis
-3. Clear questions
-4. Tags must be single words
-5. Challenging but answerable
-6. No harmful topics
+CRITICAL REQUIREMENTS:
+1. Each question MUST have EXACTLY ONE TAG - no exceptions
+2. Questions should be concise yet detailed enough to be clear
+3. Only use paragraph-length for complex topics that require it
+4. Keep questions focused and to the point
+5. Create questions that test different cognitive abilities:
+   - One testing analytical reasoning
+   - One testing creative thinking
+   - One testing knowledge application
+   - One testing logical problem solving
+6. NO questions requiring very recent information or real-time data
 
-{tag_requirements}
-
-CRITICAL: Any response with more than one tag per question will be rejected."""
+DOUBLE CHECK: I need EXACTLY 4 questions, each with EXACTLY 1 tag.
+"""
 
     elif not request.input_question.tags:
         message = f"""Analyze this question and generate 4 related questions.
@@ -507,16 +566,18 @@ Required JSON Schema:
         {{
             "question": "{request.input_question.question}",
             "tags": ["primaryCapability"]
-        }}
+        }},
+        ... // 3 more related questions, each with EXACTLY ONE TAG
     ]
 }}
 
-Requirements:
-- First question in response must be the input question with appropriate tag
-- Generate 3 additional related questions
-- Each question MUST have exactly 1 tag identifying its primary capability
-- Related questions should test similar capabilities
-- No harmful topics
+CRITICAL REQUIREMENTS:
+1. First question must be the input question with one appropriate tag
+2. Generate 3 additional related questions that explore similar themes or concepts
+3. Each question MUST have EXACTLY ONE TAG - no exceptions
+4. Keep questions concise yet clear and focused
+5. Only use paragraph-length if absolutely necessary for clarity
+6. Questions should be direct and to the point
 
 {tag_requirements}"""
     else:
@@ -524,8 +585,8 @@ Requirements:
         original_tags = request.input_question.tags[:4]
         tag_list = ", ".join([f'"{tag}"' for tag in original_tags])
         new_tag_count = min(len(original_tags) + 1, 5)
-        
-        message = f"""Analyze this tagged question and generate 4 related questions with additional detail.
+
+        message = f"""Analyze this tagged question and generate 4 related questions.
 
 Input Question: {{
     "question": "{request.input_question.question}",
@@ -536,39 +597,33 @@ Required JSON Schema:
 {{
     "questions": [
         {{
-            "question": "The question text goes here",
-            "tags": [{tag_list}, "additionalTag"]  // Original tags plus one new tag
-        }}
+            "question": "Concise question that provides necessary context and clear instructions",
+            "tags": [{tag_list}, "additionalTag"] // EXACTLY {new_tag_count} tags
+        }},
+        ... // 3 more questions, each with EXACTLY {new_tag_count} tags
     ]
 }}
 
-Requirements:
-- Generate 4 new questions related to the input question
-- Each question MUST have exactly {new_tag_count} tags total
-- PRESERVE ALL original tags: [{tag_list}] in the exact same order
-- Add EXACTLY ONE NEW complementary tag at the end of the tag list
-- The new tag should describe a specific capability or aspect being tested
-- Maximum of 5 tags total allowed
-- If input has 4 tags already, new tag should be a refinement of the last tag
-- Build upon the theme of the input question
-- Explore different aspects while maintaining thematic connection
-- No harmful topics
+CRITICAL REQUIREMENTS:
+1. EVERY question MUST have EXACTLY {new_tag_count} tags total
+2. Keep ALL original tags: [{tag_list}] in the EXACT SAME order
+3. Add EXACTLY ONE NEW relevant tag at the end (word or short phrase up to 5 words)
+4. Make questions concise yet clear and detailed:
+   - Only as long as necessary to provide context and instructions
+   - Use paragraph-length ONLY when complexity truly requires it
+   - Prefer shorter, more focused questions when possible
+5. Questions must be related to the input theme but explore different aspects
 
-{tag_requirements}
+DOUBLE-CHECK: Count the tags for each question - there should be EXACTLY {new_tag_count} tags per question."""
 
-CRITICAL:
-- Keep original tags [{tag_list}] in their exact order
-- Add exactly ONE new tag at the end
-- Total tag count must be {new_tag_count} (maximum 5)
-- Do not modify or remove any original tags
-- If input has 4+ tags, new tag should refine/specialize the last tag"""
+    message_text = f"{system_prompt}\n\n{message}"
 
     return await route_model_request(
-        request.model,
-        message,
-        request.openai_api_key,
-        request.anthropic_api_key,
-        output_struct=QuestionResponse
+        model_name=request.model,
+        message=message_text,
+        openai_api_key=request.openai_api_key,
+        anthropic_api_key=request.anthropic_api_key,
+        output_struct=QuestionResponse,
     )
 
 
@@ -614,7 +669,7 @@ async def list_models():
     return models
 
 
-@llm_compare_app.function()
+@llm_compare_app.function(enable_memory_snapshot=True, container_idle_timeout=1200)
 @asgi_app()
 def fastapi_app():
     logging.info("Starting FastAPI app")

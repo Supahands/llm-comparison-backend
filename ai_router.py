@@ -48,6 +48,7 @@ llm_compare_app = App(
         Secret.from_name("llm_comparison_github"),
         Secret.from_name("my-huggingface-secret"),
         Secret.from_name("Langfuse-Secret"),
+        Secret.from_name("cloudflare-developers"),
     ],
 )
 
@@ -59,6 +60,7 @@ with llm_compare_app.image.imports():
     import re
 
     litellm.set_verbose = True
+    litellm.drop_params=True
     litellm.success_callback = ["langfuse"]
     litellm.failure_callback = ["langfuse"]  # logs errors to langfuse
 
@@ -173,9 +175,15 @@ class Question(BaseModel):
 
 class QuestionGenerationRequest(BaseModel):
     model: str = Field(..., description="Name of the model to use.")
-    input_question: Optional[Question] = Field(None, description="Single question with optional tags")
-    openai_api_key: Optional[str] = Field(None, description="API key if required by the openai provider.")
-    anthropic_api_key: Optional[str] = Field(None, description="API key if required by the anthropic provider.")
+    input_question: Optional[Question] = Field(
+        None, description="Single question with optional tags"
+    )
+    openai_api_key: Optional[str] = Field(
+        None, description="API key if required by the openai provider."
+    )
+    anthropic_api_key: Optional[str] = Field(
+        None, description="API key if required by the anthropic provider."
+    )
 
 
 class ModelInfo(BaseModel):
@@ -193,14 +201,13 @@ class QuestionResponse(BaseModel):
 
     model_config = {
         "json_schema_extra": {
-            "examples": [{
-                "questions": [
-                    {
-                        "question": "Example question text",
-                        "tags": ["example_tag"]
-                    }
-                ]
-            }]
+            "examples": [
+                {
+                    "questions": [
+                        {"question": "Example question text", "tags": ["example_tag"]}
+                    ]
+                }
+            ]
         }
     }
 
@@ -234,15 +241,17 @@ def redact_words(model_name, text):
 
     return text
 
+
 def strip_thinking_tags(content: str) -> str:
     """Strip <think>...</think> tags and their contents from the response. WIP"""
     if isinstance(content, str):
         # Pattern to match <think>...</think> including newlines
-        pattern = r'<think>[\s\S]*?</think>'
+        pattern = r"<think>[\s\S]*?</think>"
         # Remove all instances of the pattern
-        cleaned_content = re.sub(pattern, '', content)
+        cleaned_content = re.sub(pattern, "", content)
         return cleaned_content
     return content
+
 
 async def handle_completion(
     model_name: str,
@@ -257,15 +266,16 @@ async def handle_completion(
             "messages": [
                 {
                     "role": "system",
-                    "content": """You are a helpful AI assistant.""" if not output_struct else
-                    """You are a JSON-only API. Always respond with valid JSON matching the required schema. 
+                    "content": """You are a helpful AI assistant."""
+                    if not output_struct
+                    else """You are a JSON-only API. Always respond with valid JSON matching the required schema. 
 Never include explanatory text outside the JSON structure.
 CRITICAL: Response must be a valid JSON object, not a string containing JSON.
 CRITICAL REQUIREMENT: Each question must have EXACTLY the number of tags specified in the prompt.
 For initial questions with no input, use EXACTLY ONE tag per question.
-Never provide more tags than requested."""
+Never provide more tags than requested.""",
                 },
-                {"role": "user", "content": message}
+                {"role": "user", "content": message},
             ],
             "timeout": 180.00,
             "metadata": {
@@ -279,17 +289,19 @@ Never provide more tags than requested."""
             completion_kwargs["response_format"] = {
                 "type": "json_schema",
                 "json_schema": json_schema,
-                "strict": True
+                "strict": True,
             }
 
         if api_base:
             # For Ollama's OpenAI-compatible endpoint, ensure we use the correct path and provide a dummy API key
             if "openai" in model_name.lower():
                 # Ensure the base URL points to /v1 endpoint
-                if not api_base.endswith('/v1'):
+                if not api_base.endswith("/v1"):
                     api_base = f"{api_base.rstrip('/')}/v1"
                 completion_kwargs["api_base"] = api_base
-                completion_kwargs["api_key"] = "ollama"  # Required but not validated by Ollama
+                completion_kwargs["api_key"] = (
+                    "ollama"  # Required but not validated by Ollama
+                )
             else:
                 completion_kwargs["api_base"] = api_base
 
@@ -299,7 +311,7 @@ Never provide more tags than requested."""
             completion_kwargs["response_format"] = {
                 "type": "json_schema",
                 "schema": json_schema,
-                "strict": True
+                "strict": True,
             }
 
         response_obj = completion(**completion_kwargs)
@@ -317,7 +329,7 @@ Never provide more tags than requested."""
             # Strip thinking tags specifically for question generation responses
             if output_struct == QuestionResponse and isinstance(content, str):
                 content = strip_thinking_tags(content)
-                
+
             # Apply redaction
             response_obj.choices[0].message.content = redact_words(model_name, content)
 
@@ -330,31 +342,17 @@ Never provide more tags than requested."""
         logging.error(f"Error during completion: {error_msg}")
         error_response = {
             "questions": [
-                {
-                    "question": "Error occurred during completion",
-                    "tags": ["error"]
-                }
+                {"question": "Error occurred during completion", "tags": ["error"]}
             ]
         }
-        raise HTTPException(
-            status_code=500,
-            detail=error_response
-        )
+        raise HTTPException(status_code=500, detail=error_response)
     except Exception as e:
         error_msg = str(e)
         logging.error(f"Unexpected error during completion: {error_msg}")
         error_response = {
-            "questions": [
-                {
-                    "question": "Unexpected error occurred",
-                    "tags": ["error"]
-                }
-            ]
+            "questions": [{"question": "Unexpected error occurred", "tags": ["error"]}]
         }
-        raise HTTPException(
-            status_code=500,
-            detail=error_response
-        )
+        raise HTTPException(status_code=500, detail=error_response)
 
 
 async def route_model_request(
@@ -379,7 +377,9 @@ async def route_model_request(
     if openai_model and openai_api_key:
         logging.info(f"Using OpenAI provider with model_id: {openai_model['model_id']}")
         with temporary_env_var("OPENAI_API_KEY", openai_api_key):
-            return await handle_completion(openai_model["model_id"], message, output_struct=output_struct)
+            return await handle_completion(
+                openai_model["model_id"], message, output_struct=output_struct
+            )
 
     # Anthropic provider check
     anthropic_model = next(
@@ -395,7 +395,24 @@ async def route_model_request(
             f"Using Anthropic provider with model_id: {anthropic_model['model_id']}"
         )
         with temporary_env_var("ANTHROPIC_API_KEY", anthropic_api_key):
-            return await handle_completion(anthropic_model["model_id"], message, output_struct=output_struct)
+            return await handle_completion(
+                anthropic_model["model_id"], message, output_struct=output_struct
+            )
+
+    cloudflare_model = next(
+        (
+            m
+            for m in models
+            if m["model_name"] == model_name and m["provider"] == "cloudflare"
+        ),
+        None,
+    )
+    if cloudflare_model:
+        logging.info(
+            f"Using Cloudflare provider with model_id: {cloudflare_model['model_id']}"
+        )
+        model_id = f"cloudflare/{cloudflare_model['model_id']}"
+        return await handle_completion(model_id, message, output_struct=output_struct)
 
     # GitHub provider check
     github_model = next(
@@ -408,7 +425,9 @@ async def route_model_request(
     )
     if github_model:
         logging.info(f"Using GitHub provider with model_id: {github_model['model_id']}")
-        return await handle_completion(github_model["model_id"], message, output_struct=output_struct)
+        return await handle_completion(
+            github_model["model_id"], message, output_struct=output_struct
+        )
 
     # Hugging Face provider check
     huggingface_model = next(
@@ -423,7 +442,9 @@ async def route_model_request(
         logging.info(
             f"Using Hugging Face provider with model_id: {huggingface_model['model_id']}"
         )
-        return await handle_completion(huggingface_model["model_id"], message, output_struct=output_struct)
+        return await handle_completion(
+            huggingface_model["model_id"], message, output_struct=output_struct
+        )
 
     # Ollama provider check
     ollama_model = next(
@@ -437,9 +458,11 @@ async def route_model_request(
     if ollama_model:
         logging.info(f"Using Ollama provider with model_id: {ollama_model['model_id']}")
         model_id = f"openai/{ollama_model['model_id']}"
-        # api_url = os.environ["OLLAMA_API_URL"]
-        api_url = "https://supa-dev--llm-comparison-api-ollama-api-dev.modal.run"
-        return await handle_completion(model_id, message, api_base=api_url, output_struct=output_struct)
+        api_url = os.environ["OLLAMA_API_URL"]
+        # api_url = "https://supa-dev--llm-comparison-api-ollama-api-dev.modal.run"
+        return await handle_completion(
+            model_id, message, api_base=api_url, output_struct=output_struct
+        )
 
     # Error handling
     model_info = next((m for m in models if m["model_name"] == model_name), None)
@@ -464,6 +487,7 @@ def get_required_tag_count(question: Optional[Question]) -> int:
     if len(question.tags) >= 4:
         return 5
     return len(question.tags) + 1
+
 
 @web_app.post("/question_generation")
 async def question_generation(request: QuestionGenerationRequest):
@@ -555,7 +579,7 @@ CRITICAL REQUIREMENTS:
         original_tags = request.input_question.tags[:4]
         tag_list = ", ".join([f'"{tag}"' for tag in original_tags])
         new_tag_count = min(len(original_tags) + 1, 5)
-        
+
         message = f"""Analyze this tagged question and generate 4 related questions.
 
 Input Question: {{
@@ -587,13 +611,13 @@ CRITICAL REQUIREMENTS:
 DOUBLE-CHECK: Count the tags for each question - there should be EXACTLY {new_tag_count} tags per question."""
 
     message_text = f"{system_prompt}\n\n{message}"
-    
+
     return await route_model_request(
         model_name=request.model,
-        message=message_text,  
+        message=message_text,
         openai_api_key=request.openai_api_key,
         anthropic_api_key=request.anthropic_api_key,
-        output_struct=QuestionResponse
+        output_struct=QuestionResponse,
     )
 
 

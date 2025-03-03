@@ -22,6 +22,7 @@ MODEL_IDS: list[str] = [
     "llama3.2:1b",
     "llama3.3",
     "llama3.2-vision:11b",
+    "llama3.2-vision:11b-instruct-q8_0",
     "llama3.2-vision:90b",
     "llama3.2:3b-instruct-q8_0",
     "llama3.3:70b-instruct-q2_K",
@@ -31,6 +32,7 @@ MODEL_IDS: list[str] = [
     "deepseek-r1:1.5b",
     "mistral",
     "gemma2",
+    "gemma2:27b-instruct-q8_0",
     "qwen2.5",
     "yi",
     "qwq:32b",
@@ -310,7 +312,7 @@ async def proxy(request: Request, path: str):
         )
 
 @ollama_app.function(
-    gpu=gpu.A100(count=3), 
+    gpu=gpu.L40S(count=3), 
     allow_concurrent_inputs=10, 
     concurrency_limit=1, 
     container_idle_timeout=1200,

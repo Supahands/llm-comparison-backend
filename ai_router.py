@@ -462,6 +462,7 @@ async def route_model_request(
         model_id = f"openai/{ollama_model['model_id']}"
         api_url = os.environ["OLLAMA_API_URL"]
         # api_url = "https://supa-dev--llm-comparison-api-ollama-api-dev.modal.run"
+
         return await handle_completion(
             model_id, message, api_base=api_url, output_struct=output_struct
         )

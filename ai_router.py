@@ -8,7 +8,6 @@ from pydantic import BaseModel, Field
 from contextlib import contextmanager
 from modal import Image, App, asgi_app, Secret
 from const import LIST_OF_REDACTED_WORDS
-import json
 import re
 
 # Configure logging
@@ -177,6 +176,9 @@ class QuestionGenerationRequest(BaseModel):
     model: str = Field(..., description="Name of the model to use.")
     input_question: Optional[Question] = Field(
         None, description="Single question with optional tags"
+    )
+    tag_limit: Optional[int] = Field(
+        None, description="Maximum number of tags to use for generated questions"
     )
     openai_api_key: Optional[str] = Field(
         None, description="API key if required by the openai provider."
@@ -477,21 +479,25 @@ async def route_model_request(
         raise HTTPException(status_code=400, detail="Provider not supported")
 
 
-def get_required_tag_count(question: Optional[Question]) -> int:
+def get_required_tag_count(question: Optional[Question], tag_limit: Optional[int] = None) -> int:
     """Determine the number of tags required based on input question."""
+    # Default tag limit if none provided
+    if tag_limit is None:
+        tag_limit = 5
+        
     if not question:
         return 1
     if not question.tags:
         return 1
-    # Limit to 5 tags total (input tags + 1 new tag)
-    if len(question.tags) >= 4:
-        return 5
+    # Limit to n tags total (input tags + 1 new tag)
+    if len(question.tags) >= tag_limit - 1:
+        return tag_limit
     return len(question.tags) + 1
 
 
 @web_app.post("/question_generation")
 async def question_generation(request: QuestionGenerationRequest):
-    required_tag_count = get_required_tag_count(request.input_question)
+    required_tag_count = get_required_tag_count(request.input_question, request.tag_limit)
 
     # Modified system prompt to prefer concise questions
     system_prompt = f"""You are a precise AI assistant that creates clear, focused questions.
@@ -663,7 +669,7 @@ async def list_models():
     return models
 
 
-@llm_compare_app.function()
+@llm_compare_app.function(enable_memory_snapshot=True, container_idle_timeout=1200)
 @asgi_app()
 def fastapi_app():
     logging.info("Starting FastAPI app")

@@ -13,6 +13,8 @@ from contextlib import asynccontextmanager
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 
+
+
 volume = Volume.from_name("model-storage", create_if_missing=True)
 # Default server port.
 MODEL_IDS: list[str] = [
@@ -176,6 +178,8 @@ image = (
     .workdir("/root/models")
     .run_function(download_model, volumes={"/root/models": volume})
 )
+
+image_with_source = image.add_local_python_source("deploy")
 ollama_app = modal.App(
     "ollama-service",
     image=image,
@@ -312,7 +316,7 @@ async def proxy(request: Request, path: str):
         )
 
 @ollama_app.function(
-    gpu=gpu.L40S(count=3), 
+    gpu="L40S:3", 
     allow_concurrent_inputs=10, 
     concurrency_limit=1, 
     container_idle_timeout=1200,

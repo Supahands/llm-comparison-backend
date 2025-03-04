@@ -9,11 +9,11 @@ from contextlib import contextmanager
 from modal import Image, App, asgi_app, Secret
 from const import LIST_OF_REDACTED_WORDS
 from prompts import (
-    get_question_generation_system_prompt, 
-    TAG_REQUIREMENTS, 
-    get_basic_question_prompt, 
-    get_untagged_question_prompt, 
-    get_tagged_question_prompt
+    get_question_generation_system_prompt,
+    TAG_REQUIREMENTS,
+    get_basic_question_prompt,
+    get_untagged_question_prompt,
+    get_tagged_question_prompt,
 )
 import re
 
@@ -42,8 +42,19 @@ web_app.add_middleware(
     allow_headers=["*"],
 )
 
-image = Image.debian_slim().pip_install(
-    ["litellm", "supabase", "pydantic==2.5.3", "fastapi==0.109.0", "openai", "langfuse"]
+image = (
+    Image.debian_slim()
+    .pip_install(
+        [
+            "litellm",
+            "supabase",
+            "pydantic==2.5.3",
+            "fastapi==0.109.0",
+            "openai",
+            "langfuse",
+        ]
+    )
+    .add_local_python_source("const", "deploy", "ollama_service", "prompts", copy=True)
 )
 llm_compare_app = App(
     name="llm-compare-api",
@@ -66,7 +77,7 @@ with llm_compare_app.image.imports():
     import re
 
     litellm.set_verbose = True
-    litellm.drop_params=True
+    litellm.drop_params = True
     litellm.success_callback = ["langfuse"]
     litellm.failure_callback = ["langfuse"]  # logs errors to langfuse
 
@@ -487,12 +498,14 @@ async def route_model_request(
         raise HTTPException(status_code=400, detail="Provider not supported")
 
 
-def get_required_tag_count(question: Optional[Question], tag_limit: Optional[int] = None) -> int:
+def get_required_tag_count(
+    question: Optional[Question], tag_limit: Optional[int] = None
+) -> int:
     """Determine the number of tags required based on input question."""
     # Default tag limit if none provided
     if tag_limit is None:
         tag_limit = 5
-        
+
     if not question:
         return 1
     if not question.tags:
@@ -505,7 +518,9 @@ def get_required_tag_count(question: Optional[Question], tag_limit: Optional[int
 
 @web_app.post("/question_generation")
 async def question_generation(request: QuestionGenerationRequest):
-    required_tag_count = get_required_tag_count(request.input_question, request.tag_limit)
+    required_tag_count = get_required_tag_count(
+        request.input_question, request.tag_limit
+    )
 
     # Get system prompt from the prompts module
     system_prompt = get_question_generation_system_prompt(required_tag_count)
@@ -514,8 +529,7 @@ async def question_generation(request: QuestionGenerationRequest):
         message = get_basic_question_prompt()
     elif not request.input_question.tags:
         message = get_untagged_question_prompt(
-            request.input_question.question,
-            TAG_REQUIREMENTS
+            request.input_question.question, TAG_REQUIREMENTS
         )
     else:
         # Get original tags, limiting to first 4 if more are provided
@@ -523,9 +537,7 @@ async def question_generation(request: QuestionGenerationRequest):
         new_tag_count = min(len(original_tags) + 1, 5)
 
         message = get_tagged_question_prompt(
-            request.input_question.question,
-            original_tags,
-            new_tag_count
+            request.input_question.question, original_tags, new_tag_count
         )
 
     message_text = f"{system_prompt}\n\n{message}"

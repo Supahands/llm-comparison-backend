@@ -156,9 +156,20 @@ class ModelResponse(BaseModel):
     usage: Usage
 
 
+class Config(BaseModel):
+    system_prompt: Optional[str] = Field(None, description="Custom system prompt for the model.")
+    temperature: Optional[float] = Field(0.7, description="Sampling temperature for the model.")
+    top_p: Optional[float] = Field(1, description="Top-p sampling parameter.")
+    max_tokens: Optional[int] = Field(1000, description="Maximum number of tokens in the response.")
+    json_format: Optional[bool] = Field(False, description="Whether to format the response as JSON.")
+
 class MessageRequest(BaseModel):
     model: str = Field(..., description="Name of the model to use.")
     message: str = Field(..., description="Message text to send to the model.")
+    images: List[str] = Field([], description="Array of base64-encoded images.")
+    config: Optional[Config] = Field(
+        None, description="Configuration parameters for the model request."
+    )
     openai_api_key: Optional[str] = Field(
         None, description="API key if required by the openai provider."
     )
@@ -258,26 +269,53 @@ def strip_thinking_tags(content: str) -> str:
 async def handle_completion(
     model_name: str,
     message: str,
+    config: Optional[Config] = None,
     api_base: Optional[str] = None,
     output_struct: Optional[BaseModel] = None,
+    images: Optional[List[str]] = None,
 ):
     try:
         start_time = time.time()
-        completion_kwargs = {
-            "model": model_name,
-            "messages": [
-                {
-                    "role": "system",
-                    "content": """You are a helpful AI assistant."""
-                    if not output_struct
-                    else """You are a JSON-only API. Always respond with valid JSON matching the required schema. 
+        
+        # Determine the appropriate system prompt
+        system_content = """You are a helpful AI assistant."""
+        
+        if output_struct == QuestionResponse:
+            # Use special system prompt for question generation with tags
+            system_content = """You are a JSON-only API. Always respond with valid JSON matching the required schema. 
 Never include explanatory text outside the JSON structure.
 CRITICAL: Response must be a valid JSON object, not a string containing JSON.
 CRITICAL REQUIREMENT: Each question must have EXACTLY the number of tags specified in the prompt.
 For initial questions with no input, use EXACTLY ONE tag per question.
-Never provide more tags than requested.""",
-                },
-                {"role": "user", "content": message},
+Never provide more tags than requested."""
+        elif config and config.json_format:
+            # Generic JSON system prompt without tag-specific instructions
+            system_content = """You are a JSON-only API. Always respond with valid JSON matching the required format.
+Never include explanatory text outside the JSON structure.
+Your response must be a valid JSON object, not a string containing JSON."""
+        
+        # Override with custom system prompt if provided
+        if config and config.system_prompt:
+            system_content = config.system_prompt
+        
+        # Prepare the user message content - handle multimodal input if images are provided
+        user_content = message
+        if images and len(images) > 0:
+            # Format multimodal content as an array of content objects
+            user_content = [{"type": "text", "text": message}]
+            
+            # Add each image as an image_url object
+            for image in images:
+                user_content.append({
+                    "type": "image_url", 
+                    "image_url": {"url": image}
+                })
+        
+        completion_kwargs = {
+            "model": model_name,
+            "messages": [
+                {"role": "system", "content": system_content},
+                {"role": "user", "content": user_content},
             ],
             "timeout": 180.00,
             "metadata": {
@@ -285,14 +323,27 @@ Never provide more tags than requested.""",
             },
         }
 
-        # Only add JSON schema validation for question generation endpoint
+        # Apply config parameters if provided
+        if config:
+            if config.temperature is not None:
+                completion_kwargs["temperature"] = config.temperature
+            if config.top_p is not None:
+                completion_kwargs["top_p"] = config.top_p
+            if config.max_tokens is not None:
+                completion_kwargs["max_tokens"] = config.max_tokens
+        
+        # Set response format based on the scenario
         if output_struct:
+            # Full JSON schema validation for question generation
             json_schema = output_struct.model_json_schema()
             completion_kwargs["response_format"] = {
                 "type": "json_schema",
                 "json_schema": json_schema,
                 "strict": True,
             }
+        elif config and config.json_format:
+            # Simple JSON response format for generic JSON requests
+            completion_kwargs["response_format"] = {"type": "json"}
 
         if api_base:
             # For Ollama's OpenAI-compatible endpoint, ensure we use the correct path and provide a dummy API key
@@ -301,21 +352,11 @@ Never provide more tags than requested.""",
                 if not api_base.endswith("/v1"):
                     api_base = f"{api_base.rstrip('/')}/v1"
                 completion_kwargs["api_base"] = api_base
-                completion_kwargs["api_key"] = (
-                    "ollama"  # Required but not validated by Ollama
-                )
+                completion_kwargs["api_key"] = "ollama"  # Required but not validated by Ollama
             else:
                 completion_kwargs["api_base"] = api_base
 
-        if output_struct:
-            # Convert Pydantic model to JSON schema
-            json_schema = output_struct.model_json_schema()
-            completion_kwargs["response_format"] = {
-                "type": "json_schema",
-                "schema": json_schema,
-                "strict": True,
-            }
-
+        # Rest of the function remains the same
         response_obj = completion(**completion_kwargs)
 
         end_time = time.time()
@@ -324,9 +365,7 @@ Never provide more tags than requested.""",
         # Check if response is empty and replace with default message
         content = response_obj.choices[0].message.content
         if not content or content.strip() == "":
-            response_obj.choices[
-                0
-            ].message.content = "Sorry, I couldn't answer this question :("
+            response_obj.choices[0].message.content = "Sorry, I couldn't answer this question :("
         else:
             # Strip thinking tags specifically for question generation responses
             if output_struct == QuestionResponse and isinstance(content, str):
@@ -359,6 +398,8 @@ Never provide more tags than requested.""",
 
 async def route_model_request(
     model_name: str,
+    config: Optional[Config],
+    images: Optional[List[str]],
     message: str,  # Expecting a string message
     openai_api_key: Optional[str] = None,
     anthropic_api_key: Optional[str] = None,
@@ -380,7 +421,7 @@ async def route_model_request(
         logging.info(f"Using OpenAI provider with model_id: {openai_model['model_id']}")
         with temporary_env_var("OPENAI_API_KEY", openai_api_key):
             return await handle_completion(
-                openai_model["model_id"], message, output_struct=output_struct
+                openai_model["model_id"], message, config=config, images=images, output_struct=output_struct
             )
 
     # Anthropic provider check
@@ -398,7 +439,7 @@ async def route_model_request(
         )
         with temporary_env_var("ANTHROPIC_API_KEY", anthropic_api_key):
             return await handle_completion(
-                anthropic_model["model_id"], message, output_struct=output_struct
+                anthropic_model["model_id"], message, config=config, images=images, output_struct=output_struct
             )
 
     cloudflare_model = next(
@@ -414,7 +455,7 @@ async def route_model_request(
             f"Using Cloudflare provider with model_id: {cloudflare_model['model_id']}"
         )
         model_id = f"cloudflare/{cloudflare_model['model_id']}"
-        return await handle_completion(model_id, message, output_struct=output_struct)
+        return await handle_completion(model_id, message, config=config, images=images, output_struct=output_struct)
 
     # GitHub provider check
     github_model = next(
@@ -428,7 +469,7 @@ async def route_model_request(
     if github_model:
         logging.info(f"Using GitHub provider with model_id: {github_model['model_id']}")
         return await handle_completion(
-            github_model["model_id"], message, output_struct=output_struct
+            github_model["model_id"], message, config=config, images=images, output_struct=output_struct
         )
 
     # Hugging Face provider check
@@ -445,7 +486,7 @@ async def route_model_request(
             f"Using Hugging Face provider with model_id: {huggingface_model['model_id']}"
         )
         return await handle_completion(
-            huggingface_model["model_id"], message, output_struct=output_struct
+            huggingface_model["model_id"], message, config=config, images=images, output_struct=output_struct
         )
 
     # Ollama provider check
@@ -464,7 +505,7 @@ async def route_model_request(
         # api_url = "https://supa-dev--llm-comparison-api-ollama-api-dev.modal.run"
 
         return await handle_completion(
-            model_id, message, api_base=api_url, output_struct=output_struct
+            model_id, message, config=config, api_base=api_url, images=images, output_struct=output_struct
         )
 
     # Error handling
@@ -647,6 +688,8 @@ async def messaging(request: MessageRequest):
 
     return await route_model_request(
         request.model,
+        request.config,
+        request.images,
         request.message,
         request.openai_api_key,
         request.anthropic_api_key,

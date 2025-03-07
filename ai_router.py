@@ -277,6 +277,9 @@ async def handle_completion(
     try:
         start_time = time.time()
         
+        # Determine if we're using Cloudflare provider
+        is_cloudflare = "cloudflare/" in model_name if model_name else False
+        
         # Determine the appropriate system prompt
         system_content = """You are a helpful AI assistant."""
         
@@ -297,12 +300,23 @@ Your response must be a valid JSON object, not a string containing JSON."""
         # Override with custom system prompt if provided
         if config and config.system_prompt:
             system_content = config.system_prompt
+            # Ensure the word "json" is present when json_format is true
+            if config.json_format and "json" not in system_content.lower():
+                system_content += "\nPlease format your response as JSON."
         
         # Prepare the user message content - handle multimodal input if images are provided
         user_content = message
+        
+        # If JSON format is requested but the word "json" is not in the messages,
+        # append a request for JSON to the user message
+        if config and config.json_format and "json" not in message.lower() and "json" not in system_content.lower():
+            if isinstance(user_content, str):
+                user_content += "\nPlease format your response as JSON."
+        
         if images and len(images) > 0:
             # Format multimodal content as an array of content objects
-            user_content = [{"type": "text", "text": message}]
+            if isinstance(user_content, str):
+                user_content = [{"type": "text", "text": user_content}]
             
             # Add each image as an image_url object
             for image in images:
@@ -332,18 +346,22 @@ Your response must be a valid JSON object, not a string containing JSON."""
             if config.max_tokens is not None:
                 completion_kwargs["max_tokens"] = config.max_tokens
         
-        # Set response format based on the scenario
+        # Set response format based on the scenario and provider
         if output_struct:
-            # Full JSON schema validation for question generation
             json_schema = output_struct.model_json_schema()
-            completion_kwargs["response_format"] = {
-                "type": "json_schema",
-                "json_schema": json_schema,
-                "strict": True,
-            }
+            if is_cloudflare:
+                # For Cloudflare, use simpler response format to avoid schema issues
+                completion_kwargs["response_format"] = {"type": "json_object"}
+            else:
+                # Full JSON schema validation for other providers
+                completion_kwargs["response_format"] = {
+                    "type": "json_schema",
+                    "json_schema": json_schema,
+                    "strict": True,
+                }
         elif config and config.json_format:
             # Simple JSON response format for generic JSON requests
-            completion_kwargs["response_format"] = {"type": "json"}
+            completion_kwargs["response_format"] = {"type": "json_object"}
 
         if api_base:
             # For Ollama's OpenAI-compatible endpoint, ensure we use the correct path and provide a dummy API key
@@ -398,9 +416,9 @@ Your response must be a valid JSON object, not a string containing JSON."""
 
 async def route_model_request(
     model_name: str,
-    config: Optional[Config],
-    images: Optional[List[str]],
     message: str,  # Expecting a string message
+    config: Optional[Config] = None,
+    images: Optional[List[str]] = None,
     openai_api_key: Optional[str] = None,
     anthropic_api_key: Optional[str] = None,
     output_struct: Optional[BaseModel] = None,
@@ -687,12 +705,12 @@ async def messaging(request: MessageRequest):
     logging.info(f"Message: {request.message}")
 
     return await route_model_request(
-        request.model,
-        request.config,
-        request.images,
-        request.message,
-        request.openai_api_key,
-        request.anthropic_api_key,
+        model_name=request.model,
+        message=request.message,
+        config=request.config,
+        images=request.images,
+        openai_api_key=request.openai_api_key,
+        anthropic_api_key=request.anthropic_api_key,
     )
 
 

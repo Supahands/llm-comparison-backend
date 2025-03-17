@@ -1,14 +1,16 @@
 import os
 import logging
 import time
-from typing import List, Optional
+from typing import List, Optional, AsyncGenerator, Any, Union
 from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from contextlib import contextmanager
 from modal import Image, App, asgi_app, Secret
 from const import LIST_OF_REDACTED_WORDS
 import re
+import json
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -53,13 +55,13 @@ llm_compare_app = App(
 
 with llm_compare_app.image.imports():
     import litellm
-    from litellm import completion
+    from litellm import completion, acompletion
     from supabase import create_client, Client
     from openai import OpenAIError
     import re
 
     litellm.set_verbose = True
-    litellm.drop_params=True
+    litellm.drop_params = True
     litellm.success_callback = ["langfuse"]
     litellm.failure_callback = ["langfuse"]  # logs errors to langfuse
 
@@ -157,11 +159,21 @@ class ModelResponse(BaseModel):
 
 
 class Config(BaseModel):
-    system_prompt: Optional[str] = Field(None, description="Custom system prompt for the model.")
-    temperature: Optional[float] = Field(0.7, description="Sampling temperature for the model.")
+    system_prompt: Optional[str] = Field(
+        None, description="Custom system prompt for the model."
+    )
+    temperature: Optional[float] = Field(
+        0.7, description="Sampling temperature for the model."
+    )
     top_p: Optional[float] = Field(1, description="Top-p sampling parameter.")
-    max_tokens: Optional[int] = Field(1000, description="Maximum number of tokens in the response.")
-    json_format: Optional[bool] = Field(False, description="Whether to format the response as JSON.")
+    max_tokens: Optional[int] = Field(
+        1000, description="Maximum number of tokens in the response."
+    )
+    json_format: Optional[bool] = Field(
+        False, description="Whether to format the response as JSON."
+    )
+    stream: Optional[bool] = Field(False, description="Whether to stream the response.")
+
 
 class MessageRequest(BaseModel):
     model: str = Field(..., description="Name of the model to use.")
@@ -273,16 +285,17 @@ async def handle_completion(
     api_base: Optional[str] = None,
     output_struct: Optional[BaseModel] = None,
     images: Optional[List[str]] = None,
-):
+    stream: Optional[bool] = False,
+) -> Union[Any, AsyncGenerator[str, None]]:
     try:
         start_time = time.time()
-        
+
         # Determine if we're using Cloudflare provider
         is_cloudflare = "cloudflare/" in model_name if model_name else False
-        
+
         # Determine the appropriate system prompt
         system_content = """You are a helpful AI assistant."""
-        
+
         if output_struct == QuestionResponse:
             # Use special system prompt for question generation with tags
             system_content = """You are a JSON-only API. Always respond with valid JSON matching the required schema. 
@@ -296,35 +309,37 @@ Never provide more tags than requested."""
             system_content = """You are a JSON-only API. Always respond with valid JSON matching the required format.
 Never include explanatory text outside the JSON structure.
 Your response must be a valid JSON object, not a string containing JSON."""
-        
+
         # Override with custom system prompt if provided
         if config and config.system_prompt:
             system_content = config.system_prompt
             # Ensure the word "json" is present when json_format is true
             if config.json_format and "json" not in system_content.lower():
                 system_content += "\nPlease format your response as JSON."
-        
+
         # Prepare the user message content - handle multimodal input if images are provided
         user_content = message
-        
+
         # If JSON format is requested but the word "json" is not in the messages,
         # append a request for JSON to the user message
-        if config and config.json_format and "json" not in message.lower() and "json" not in system_content.lower():
+        if (
+            config
+            and config.json_format
+            and "json" not in message.lower()
+            and "json" not in system_content.lower()
+        ):
             if isinstance(user_content, str):
                 user_content += "\nPlease format your response as JSON."
-        
+
         if images and len(images) > 0:
             # Format multimodal content as an array of content objects
             if isinstance(user_content, str):
                 user_content = [{"type": "text", "text": user_content}]
-            
+
             # Add each image as an image_url object
             for image in images:
-                user_content.append({
-                    "type": "image_url", 
-                    "image_url": {"url": image}
-                })
-        
+                user_content.append({"type": "image_url", "image_url": {"url": image}})
+
         completion_kwargs = {
             "model": model_name,
             "messages": [
@@ -335,6 +350,7 @@ Your response must be a valid JSON object, not a string containing JSON."""
             "metadata": {
                 "generation_name": model_name,
             },
+            "stream": stream,
         }
 
         # Apply config parameters if provided
@@ -345,7 +361,9 @@ Your response must be a valid JSON object, not a string containing JSON."""
                 completion_kwargs["top_p"] = config.top_p
             if config.max_tokens is not None:
                 completion_kwargs["max_tokens"] = config.max_tokens
-        
+            if config.stream is not None:
+                completion_kwargs["stream"] = config.stream
+
         # Set response format based on the scenario and provider
         if output_struct:
             json_schema = output_struct.model_json_schema()
@@ -370,11 +388,58 @@ Your response must be a valid JSON object, not a string containing JSON."""
                 if not api_base.endswith("/v1"):
                     api_base = f"{api_base.rstrip('/')}/v1"
                 completion_kwargs["api_base"] = api_base
-                completion_kwargs["api_key"] = "ollama"  # Required but not validated by Ollama
+                completion_kwargs["api_key"] = (
+                    "ollama"  # Required but not validated by Ollama
+                )
             else:
                 completion_kwargs["api_base"] = api_base
-
-        # Rest of the function remains the same
+                
+        # Handle streaming response
+        if stream or (config and config.stream):
+            async def stream_generator():
+                try:
+                    async for chunk in await acompletion(**completion_kwargs):
+                        # Convert ModelResponse to a serializable format
+                        if hasattr(chunk, "model_dump"):
+                            # Use Pydantic's model_dump if available
+                            serializable_chunk = chunk.model_dump()
+                        elif hasattr(chunk, "dict"):
+                            # Use older Pydantic's dict() method if available
+                            serializable_chunk = chunk.dict()
+                        elif hasattr(chunk, "__dict__"):
+                            # Fallback to __dict__ for simple objects
+                            serializable_chunk = chunk.__dict__
+                        else:
+                            # For other types, create a simple dict with content
+                            if isinstance(chunk, dict):
+                                serializable_chunk = chunk
+                            else:
+                                serializable_chunk = {"content": str(chunk)}
+                        
+                        # Extract content from the chunk if possible
+                        if isinstance(serializable_chunk, dict):
+                            if "choices" in serializable_chunk and serializable_chunk["choices"]:
+                                choices = serializable_chunk["choices"]
+                                if isinstance(choices, list) and choices and "delta" in choices[0]:
+                                    delta = choices[0]["delta"]
+                                    if "content" in delta and delta["content"]:
+                                        # Just send the content for simpler client handling
+                                        yield delta["content"]
+                                        continue
+                        
+                        # If we couldn't extract content, send the full serialized chunk
+                        try:
+                            yield json.dumps(serializable_chunk) + "\n"
+                        except TypeError as e:
+                            logging.error(f"JSON serialization error: {str(e)}")
+                            # Fallback to a simple text response
+                            yield json.dumps({"content": str(chunk)}) + "\n"
+                except Exception as e:
+                    logging.error(f"Error during streaming: {str(e)}")
+                    yield json.dumps({"error": str(e)}) + "\n"
+            return stream_generator()
+        
+        # Non-streaming response
         response_obj = completion(**completion_kwargs)
 
         end_time = time.time()
@@ -383,7 +448,9 @@ Your response must be a valid JSON object, not a string containing JSON."""
         # Check if response is empty and replace with default message
         content = response_obj.choices[0].message.content
         if not content or content.strip() == "":
-            response_obj.choices[0].message.content = "Sorry, I couldn't answer this question :("
+            response_obj.choices[
+                0
+            ].message.content = "Sorry, I couldn't answer this question :("
         else:
             # Strip thinking tags specifically for question generation responses
             if output_struct == QuestionResponse and isinstance(content, str):
@@ -439,7 +506,12 @@ async def route_model_request(
         logging.info(f"Using OpenAI provider with model_id: {openai_model['model_id']}")
         with temporary_env_var("OPENAI_API_KEY", openai_api_key):
             return await handle_completion(
-                openai_model["model_id"], message, config=config, images=images, output_struct=output_struct
+                openai_model["model_id"],
+                message,
+                config=config,
+                images=images,
+                output_struct=output_struct,
+                stream=config.stream if config else False,
             )
 
     # Anthropic provider check
@@ -457,7 +529,12 @@ async def route_model_request(
         )
         with temporary_env_var("ANTHROPIC_API_KEY", anthropic_api_key):
             return await handle_completion(
-                anthropic_model["model_id"], message, config=config, images=images, output_struct=output_struct
+                anthropic_model["model_id"],
+                message,
+                config=config,
+                images=images,
+                output_struct=output_struct,
+                stream=config.stream if config else False,
             )
 
     cloudflare_model = next(
@@ -473,7 +550,14 @@ async def route_model_request(
             f"Using Cloudflare provider with model_id: {cloudflare_model['model_id']}"
         )
         model_id = f"cloudflare/{cloudflare_model['model_id']}"
-        return await handle_completion(model_id, message, config=config, images=images, output_struct=output_struct)
+        return await handle_completion(
+            model_id,
+            message,
+            config=config,
+            images=images,
+            output_struct=output_struct,
+            stream=config.stream,
+        )
 
     # GitHub provider check
     github_model = next(
@@ -487,7 +571,12 @@ async def route_model_request(
     if github_model:
         logging.info(f"Using GitHub provider with model_id: {github_model['model_id']}")
         return await handle_completion(
-            github_model["model_id"], message, config=config, images=images, output_struct=output_struct
+            github_model["model_id"],
+            message,
+            config=config,
+            images=images,
+            output_struct=output_struct,
+            stream=config.stream,
         )
 
     # Hugging Face provider check
@@ -504,7 +593,12 @@ async def route_model_request(
             f"Using Hugging Face provider with model_id: {huggingface_model['model_id']}"
         )
         return await handle_completion(
-            huggingface_model["model_id"], message, config=config, images=images, output_struct=output_struct
+            huggingface_model["model_id"],
+            message,
+            config=config,
+            images=images,
+            output_struct=output_struct,
+            stream=config.stream,
         )
 
     # Ollama provider check
@@ -519,11 +613,17 @@ async def route_model_request(
     if ollama_model:
         logging.info(f"Using Ollama provider with model_id: {ollama_model['model_id']}")
         model_id = f"openai/{ollama_model['model_id']}"
-        api_url = os.environ["OLLAMA_API_URL"]
-        # api_url = "https://supa-dev--llm-comparison-api-ollama-api-dev.modal.run"
+        # api_url = os.environ["OLLAMA_API_URL"]
+        api_url = "https://supa-dev--llm-comparison-api-ollama-api-dev.modal.run"
 
         return await handle_completion(
-            model_id, message, config=config, api_base=api_url, images=images, output_struct=output_struct
+            model_id,
+            message,
+            config=config,
+            api_base=api_url,
+            images=images,
+            output_struct=output_struct,
+            stream=config.stream,
         )
 
     # Error handling
@@ -539,12 +639,14 @@ async def route_model_request(
         raise HTTPException(status_code=400, detail="Provider not supported")
 
 
-def get_required_tag_count(question: Optional[Question], tag_limit: Optional[int] = None) -> int:
+def get_required_tag_count(
+    question: Optional[Question], tag_limit: Optional[int] = None
+) -> int:
     """Determine the number of tags required based on input question."""
     # Default tag limit if none provided
     if tag_limit is None:
         tag_limit = 5
-        
+
     if not question:
         return 1
     if not question.tags:
@@ -557,7 +659,9 @@ def get_required_tag_count(question: Optional[Question], tag_limit: Optional[int
 
 @web_app.post("/question_generation")
 async def question_generation(request: QuestionGenerationRequest):
-    required_tag_count = get_required_tag_count(request.input_question, request.tag_limit)
+    required_tag_count = get_required_tag_count(
+        request.input_question, request.tag_limit
+    )
 
     # Modified system prompt to prefer concise questions
     system_prompt = f"""You are a precise AI assistant that creates clear, focused questions.
@@ -689,7 +793,6 @@ DOUBLE-CHECK: Count the tags for each question - there should be EXACTLY {new_ta
 
 @web_app.post(
     "/message",
-    response_model=ModelResponse,
     status_code=status.HTTP_200_OK,
     summary="Send message to a model",
     responses={
@@ -704,14 +807,33 @@ async def messaging(request: MessageRequest):
     logging.info(f"Requested model name: {request.model}")
     logging.info(f"Message: {request.message}")
 
-    return await route_model_request(
-        model_name=request.model,
-        message=request.message,
-        config=request.config,
-        images=request.images,
-        openai_api_key=request.openai_api_key,
-        anthropic_api_key=request.anthropic_api_key,
-    )
+    if request.config and request.config.stream:
+        stream_generator = await route_model_request(
+            model_name=request.model,
+            message=request.message,
+            config=request.config,
+            images=request.images,
+            openai_api_key=request.openai_api_key,
+            anthropic_api_key=request.anthropic_api_key,
+        )
+        return StreamingResponse(
+            stream_generator,
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",  # Disable proxy buffering
+            }
+        )
+    else:
+        return await route_model_request(
+            model_name=request.model,
+            message=request.message,
+            config=request.config,
+            images=request.images,
+            openai_api_key=request.openai_api_key,
+            anthropic_api_key=request.anthropic_api_key,
+        )
 
 
 @web_app.get(

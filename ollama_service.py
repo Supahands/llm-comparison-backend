@@ -7,12 +7,11 @@ import logging
 
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import StreamingResponse
-from modal import gpu, Secret, Image, Volume 
+from modal import Secret, Image, Volume
 from contextlib import asynccontextmanager
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
-
 
 
 volume = Volume.from_name("model-storage", create_if_missing=True)
@@ -58,7 +57,8 @@ MODEL_IDS: list[str] = [
     "hf.co/Supa-AI/Ministral-8B-Instruct-2410-gguf:Q8_0",
     "hf.co/Supa-AI/gemma2-9b-cpt-sahabatai-v1-instruct-q8_0-gguf",
     "hf.co/Supa-AI/Mixtral-8x7B-Instruct-v0.1-gguf:Q8_0",
-    "hf.co/Supa-AI/malaysian-Llama-3.2-3B-Instruct-gguf:Q8_0"
+    "hf.co/Supa-AI/malaysian-Llama-3.2-3B-Instruct-gguf:Q8_0",
+    "command-a"
 ]
 
 OLLAMA_PORT: int = 11434
@@ -159,7 +159,16 @@ image = (
         "ollama/ollama:0.5.5",
         add_python="3.11",
     )
-    .env({"OLLAMA_MODELS": "/root/models"})
+    .env(
+        {
+            "OLLAMA_MODELS": "/root/models",
+            "OLLAMA_NUM_THREADS": "8",  # Adjust based on CPU cores available
+            "OLLAMA_HOST": "0.0.0.0",
+            "OLLAMA_KEEP_ALIVE": "-1",  # Keep models loaded in memory
+            "OLLAMA_MAX_LOADED_MODELS": "1",
+            "OLLAMA_NUM_PARALLEL": "2",
+        }
+    )
     .pip_install("requests")  # for healthchecks
     .pip_install("httpx")  # for reverse proxy
     .pip_install("supabase")  # Supabase client
@@ -172,7 +181,7 @@ image = (
         [
             "RUN chmod a+x /opt/entrypoint.sh",
             'ENTRYPOINT ["/opt/entrypoint.sh"]',
-            'ENV OLLAMA_MODELS=/root/models'
+            "ENV OLLAMA_MODELS=/root/models",
         ]
     )
     .workdir("/root/models")
@@ -189,9 +198,9 @@ ollama_app = modal.App(
         ),
         Secret.from_name(
             "OLLAMA_MODELS",
-        )
+        ),
     ],
-    volumes={"/root/models": volume}
+    volumes={"/root/models": volume},
 )
 with ollama_app.image.imports():
     import httpx
@@ -208,6 +217,8 @@ with ollama_app.image.imports():
 
     print("ollama server started!")
     update_model_db()
+
+
 @ollama_app.cls(
     image=image,
     secrets=[
@@ -216,33 +227,33 @@ with ollama_app.image.imports():
         ),
         Secret.from_name(
             "OLLAMA_MODELS",
-        )
+        ),
     ],
-    volumes={"/root/models": volume}
+    volumes={"/root/models": volume},
 )
-
-
 class OllamaClient:
     _instance = None
-    
+
     def __init__(self):
         self._client = None
-    
+
     @property
     def client(self) -> httpx.AsyncClient:
         if self._client is None or self._client.is_closed:
             self._client = httpx.AsyncClient(
                 base_url=OLLAMA_URL,
                 timeout=httpx.Timeout(180.0, read=180.0),
-                limits=httpx.Limits(max_keepalive_connections=50)
+                limits=httpx.Limits(max_keepalive_connections=50),
             )
         return self._client
-    
+
     async def close(self):
         if self._client and not self._client.is_closed:
             await self._client.aclose()
 
+
 ollama_client = OllamaClient()
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -251,16 +262,18 @@ async def lifespan(app: FastAPI):
     # Shutdown: Clean up client
     await ollama_client.close()
 
+
 # FastAPI proxy. This allows for requests to be handled by Modal, allowing
 # effective scaling, queues, etc.
 app = FastAPI(lifespan=lifespan)
 
 
-
-@app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "HEAD"])
+@app.api_route(
+    "/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "HEAD"]
+)
 async def proxy(request: Request, path: str):
     try:
-        client = ollama_client.client  
+        client = ollama_client.client
         url = httpx.URL(path=request.url.path, query=request.url.query.encode("utf-8"))
 
         async def _streaming_response():
@@ -273,13 +286,13 @@ async def proxy(request: Request, path: str):
                     content=request.stream() if not body else None,
                     json=await request.json() if body else None,
                 )
-                
+
                 rp_resp = await client.send(rp_req, stream=True)
                 return StreamingResponse(
                     rp_resp.aiter_raw(),
                     status_code=rp_resp.status_code,
                     media_type="text/event-stream",
-                    background=BackgroundTask(rp_resp.aclose)
+                    background=BackgroundTask(rp_resp.aclose),
                 )
             except (httpx.ReadError, httpx.ReadTimeout) as e:
                 logging.error(f"Streaming error: {str(e)}")
@@ -295,12 +308,12 @@ async def proxy(request: Request, path: str):
                 request.method,
                 url,
                 params=request.query_params,
-                json=await request.json() if body else None
+                json=await request.json() if body else None,
             )
             return Response(
                 content=response.content,
                 status_code=response.status_code,
-                headers=dict(response.headers)
+                headers=dict(response.headers),
             )
 
         if request.url.path in ("/v1/chat/completions"):
@@ -312,15 +325,16 @@ async def proxy(request: Request, path: str):
         return Response(
             content=str({"error": str(e)}).encode(),  # Encode the JSON string
             status_code=500,
-            media_type="application/json"
+            media_type="application/json",
         )
 
+
 @ollama_app.function(
-    gpu="L40S:3", 
-    allow_concurrent_inputs=10, 
-    concurrency_limit=1, 
+    gpu="L40S:2",
+    allow_concurrent_inputs=10,
+    concurrency_limit=1,
     container_idle_timeout=1200,
-    enable_memory_snapshot=True
+    enable_memory_snapshot=True,
 )
 @modal.asgi_app()
 def ollama_api():

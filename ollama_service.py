@@ -330,7 +330,7 @@ async def proxy(request: Request, path: str):
 
 
 @ollama_app.function(
-    gpu="L40S:3",
+    gpu="L40S:2",
     allow_concurrent_inputs=10,
     concurrency_limit=1,
     container_idle_timeout=1200,

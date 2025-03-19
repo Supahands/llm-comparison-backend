@@ -556,7 +556,7 @@ async def route_model_request(
             config=config,
             images=images,
             output_struct=output_struct,
-            stream=config.stream,
+            stream=config.stream if config else False,
         )
 
     # GitHub provider check
@@ -576,7 +576,7 @@ async def route_model_request(
             config=config,
             images=images,
             output_struct=output_struct,
-            stream=config.stream,
+            stream=config.stream if config else False,
         )
 
     # Hugging Face provider check
@@ -598,7 +598,7 @@ async def route_model_request(
             config=config,
             images=images,
             output_struct=output_struct,
-            stream=config.stream,
+            stream=config.stream if config else False,
         )
 
     # Ollama provider check
@@ -623,7 +623,7 @@ async def route_model_request(
             api_base=api_url,
             images=images,
             output_struct=output_struct,
-            stream=config.stream,
+            stream=config.stream if config else False,
         )
 
     # Error handling
@@ -782,9 +782,13 @@ DOUBLE-CHECK: Count the tags for each question - there should be EXACTLY {new_ta
 
     message_text = f"{system_prompt}\n\n{message}"
 
+    # Create a config with stream set to False for question generation
+    config = Config(stream=False, json_format=True)
+    
     return await route_model_request(
         model_name=request.model,
         message=message_text,
+        config=config,
         openai_api_key=request.openai_api_key,
         anthropic_api_key=request.anthropic_api_key,
         output_struct=QuestionResponse,

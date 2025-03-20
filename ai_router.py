@@ -399,41 +399,33 @@ Your response must be a valid JSON object, not a string containing JSON."""
             async def stream_generator():
                 try:
                     async for chunk in await acompletion(**completion_kwargs):
+                        # Extract only the content from the chunk, filtering out metadata
+                        content = None
+                        
                         # Convert ModelResponse to a serializable format
-                        if hasattr(chunk, "model_dump"):
-                            # Use Pydantic's model_dump if available
-                            serializable_chunk = chunk.model_dump()
-                        elif hasattr(chunk, "dict"):
-                            # Use older Pydantic's dict() method if available
-                            serializable_chunk = chunk.dict()
-                        elif hasattr(chunk, "__dict__"):
-                            # Fallback to __dict__ for simple objects
-                            serializable_chunk = chunk.__dict__
-                        else:
-                            # For other types, create a simple dict with content
-                            if isinstance(chunk, dict):
-                                serializable_chunk = chunk
-                            else:
-                                serializable_chunk = {"content": str(chunk)}
+                        if hasattr(chunk, "choices") and chunk.choices:
+                            # Standard OpenAI-like format
+                            if hasattr(chunk.choices[0], "delta") and hasattr(chunk.choices[0].delta, "content"):
+                                content = chunk.choices[0].delta.content
+                            elif hasattr(chunk.choices[0], "message") and hasattr(chunk.choices[0].message, "content"):
+                                content = chunk.choices[0].message.content
+                        elif isinstance(chunk, dict):
+                            # Dict format
+                            if "choices" in chunk and chunk["choices"]:
+                                choices = chunk["choices"]
+                                if isinstance(choices, list) and choices:
+                                    if "delta" in choices[0] and "content" in choices[0]["delta"] and choices[0]["delta"]["content"]:
+                                        content = choices[0]["delta"]["content"]
+                                    elif "message" in choices[0] and "content" in choices[0]["message"]:
+                                        content = choices[0]["message"]["content"]
                         
-                        # Extract content from the chunk if possible
-                        if isinstance(serializable_chunk, dict):
-                            if "choices" in serializable_chunk and serializable_chunk["choices"]:
-                                choices = serializable_chunk["choices"]
-                                if isinstance(choices, list) and choices and "delta" in choices[0]:
-                                    delta = choices[0]["delta"]
-                                    if "content" in delta and delta["content"]:
-                                        # Just send the content for simpler client handling
-                                        yield delta["content"]
-                                        continue
+                        # Only yield content if we found it, otherwise skip this chunk
+                        if content:
+                            yield content
                         
-                        # If we couldn't extract content, send the full serialized chunk
-                        try:
-                            yield json.dumps(serializable_chunk) + "\n"
-                        except TypeError as e:
-                            logging.error(f"JSON serialization error: {str(e)}")
-                            # Fallback to a simple text response
-                            yield json.dumps({"content": str(chunk)}) + "\n"
+                        # For error cases, still return the error
+                        if isinstance(chunk, dict) and "error" in chunk:
+                            yield json.dumps({"error": chunk["error"]}) + "\n"
                 except Exception as e:
                     logging.error(f"Error during streaming: {str(e)}")
                     yield json.dumps({"error": str(e)}) + "\n"
@@ -856,7 +848,7 @@ async def list_models():
     return models
 
 
-@llm_compare_app.function(enable_memory_snapshot=True, container_idle_timeout=1200)
+@llm_compare_app.function(enable_memory_snapshot=True, scaledown_window=1200)
 @asgi_app()
 def fastapi_app():
     logging.info("Starting FastAPI app")

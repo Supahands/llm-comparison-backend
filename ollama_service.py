@@ -49,6 +49,7 @@ MODEL_IDS: list[str] = [
     # "deepseek-v3",
     "deepseek-r1",
     # "deepseek-r1:70b",
+    "gemma3",
     "phi4",
     "phi3:14b",
     "aisingapore/gemma2-9b-cpt-sea-lionv3-instruct",
@@ -58,7 +59,8 @@ MODEL_IDS: list[str] = [
     "hf.co/Supa-AI/gemma2-9b-cpt-sahabatai-v1-instruct-q8_0-gguf",
     "hf.co/Supa-AI/Mixtral-8x7B-Instruct-v0.1-gguf:Q8_0",
     "hf.co/Supa-AI/malaysian-Llama-3.2-3B-Instruct-gguf:Q8_0",
-    "command-a"
+    "command-a",
+    "command-r7b-arabic",
 ]
 
 OLLAMA_PORT: int = 11434

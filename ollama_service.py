@@ -28,7 +28,7 @@ MODEL_IDS: list[str] = [
     "llama3.2:3b-instruct-q8_0",
     "llama3.3:70b-instruct-q2_K",
     "llama3.3:70b-instruct-q6_K",
-    "tinyllama:1.1b",
+    # "tinyllama:1.1b",
     "deepseek-coder-v2:16b",
     "deepseek-r1:1.5b",
     "mistral",
@@ -334,8 +334,8 @@ async def proxy(request: Request, path: str):
 @ollama_app.function(
     gpu="L40S:2",
     allow_concurrent_inputs=10,
-    concurrency_limit=1,
-    container_idle_timeout=1200,
+    max_containers=1,
+    scaledown_window=1200,
     enable_memory_snapshot=True,
 )
 @modal.asgi_app()

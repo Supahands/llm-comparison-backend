@@ -66,7 +66,7 @@ modal deploy --env dev deploy
 
 **Local Testing**:
 ```sh
-modal serve --env dev deploy
+modal serve --env testing deploy
 ```
 
 

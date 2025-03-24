@@ -232,6 +232,7 @@ with ollama_app.image.imports():
         ),
     ],
     volumes={"/root/models": volume},
+    enable_memory_snapshot=True
 )
 class OllamaClient:
     _instance = None

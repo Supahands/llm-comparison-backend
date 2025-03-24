@@ -332,7 +332,7 @@ async def proxy(request: Request, path: str):
 
 
 @ollama_app.function(
-    gpu="L40S:2",
+    gpu="H100:2",
     allow_concurrent_inputs=10,
     max_containers=1,
     scaledown_window=1200,

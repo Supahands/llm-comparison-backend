@@ -26,6 +26,7 @@ web_app = FastAPI(
 origins = [
     "http://localhost:3000",
     "https://eval.supa.so",
+    "https://supa-rlhf.vercel.app/"
 ]
 
 # Add CORS middleware

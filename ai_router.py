@@ -364,6 +364,7 @@ Your response must be a valid JSON object, not a string containing JSON."""
                 completion_kwargs["max_tokens"] = config.max_tokens
             if config.stream is not None:
                 completion_kwargs["stream"] = config.stream
+                completion_kwargs["stream_options"] = {"include_usage": True}
 
         # Set response format based on the scenario and provider
         if output_struct:
@@ -399,9 +400,32 @@ Your response must be a valid JSON object, not a string containing JSON."""
         if stream or (config and config.stream):
             async def stream_generator():
                 try:
+                    content_buffer = ""
                     async for chunk in await acompletion(**completion_kwargs):
                         # Extract only the content from the chunk, filtering out metadata
                         content = None
+                        
+                        # Check for usage data in the chunk (both object and dict formats)
+                        usage_data = None
+                        if hasattr(chunk, "usage") and chunk.usage:
+                            end_time = time.time()
+                            chunk.usage.response_time = (end_time - start_time) * 1000
+                            # Handle ModelResponse object with usage attribute
+                            usage_data = chunk.usage.dict() if hasattr(chunk.usage, "dict") else chunk.usage
+                        elif isinstance(chunk, dict) and "usage" in chunk:
+                            end_time = time.time()
+                            chunk["usage"].response_time = (end_time - start_time) * 1000
+                            # Handle dictionary with usage key
+                            usage_data = chunk["usage"]
+                        
+                        # If usage data is present, yield it as metadata
+                        if usage_data:
+                            metadata = f"<metadata>{json.dumps(usage_data)}</metadata>"
+                            yield metadata
+                            # Continue to next chunk if this was just a usage chunk
+                            if (hasattr(chunk, "choices") and not chunk.choices) or \
+                               (isinstance(chunk, dict) and "choices" in chunk and not chunk["choices"]):
+                                continue
                         
                         # Convert ModelResponse to a serializable format
                         if hasattr(chunk, "choices") and chunk.choices:
@@ -419,9 +443,16 @@ Your response must be a valid JSON object, not a string containing JSON."""
                                         content = choices[0]["delta"]["content"]
                                     elif "message" in choices[0] and "content" in choices[0]["message"]:
                                         content = choices[0]["message"]["content"]
+                            
+                            # Check for usage at the end of stream
+                            if "usage" in chunk:
+                                metadata = f"<metadata>{json.dumps(chunk['usage'])}</metadata>"
+                                yield metadata
+                                continue
                         
                         # Only yield content if we found it, otherwise skip this chunk
                         if content:
+                            content_buffer += content
                             yield content
                         
                         # For error cases, still return the error

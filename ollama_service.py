@@ -160,7 +160,7 @@ def update_model_db():
 
 image = (
     Image.from_registry(
-        "ollama/ollama:0.5.5",
+        "ollama/ollama:0.6.2",
         add_python="3.11",
     )
     .env(

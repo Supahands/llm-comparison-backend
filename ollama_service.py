@@ -232,7 +232,6 @@ with ollama_app.image.imports():
         ),
     ],
     volumes={"/root/models": volume},
-    enable_memory_snapshot=True
 )
 class OllamaClient:
     _instance = None
@@ -337,7 +336,6 @@ async def proxy(request: Request, path: str):
     allow_concurrent_inputs=10,
     max_containers=1,
     scaledown_window=1200,
-    enable_memory_snapshot=True,
 )
 @modal.asgi_app()
 def ollama_api():

@@ -28,7 +28,7 @@ MODEL_IDS: list[str] = [
     "llama3.2:3b-instruct-q8_0",
     "llama3.3:70b-instruct-q2_K",
     "llama3.3:70b-instruct-q6_K",
-    # "tinyllama:1.1b",
+    "tinyllama",
     "deepseek-coder-v2:16b",
     "deepseek-r1:1.5b",
     "mistral",
@@ -48,8 +48,8 @@ MODEL_IDS: list[str] = [
     "athene-v2:72b",
     # "deepseek-v3",
     "deepseek-r1",
-    # "deepseek-r1:70b",
-    "gemma3",
+    "deepseek-r1:70b",
+    # "gemma3",
     "phi4",
     "phi3:14b",
     "aisingapore/gemma2-9b-cpt-sea-lionv3-instruct",
@@ -61,6 +61,8 @@ MODEL_IDS: list[str] = [
     "hf.co/Supa-AI/malaysian-Llama-3.2-3B-Instruct-gguf:Q8_0",
     "command-a",
     "command-r7b-arabic",
+    "command-r",
+    "command-r-plus",
 ]
 
 OLLAMA_PORT: int = 11434
@@ -232,7 +234,6 @@ with ollama_app.image.imports():
         ),
     ],
     volumes={"/root/models": volume},
-    enable_memory_snapshot=True
 )
 class OllamaClient:
     _instance = None
@@ -335,9 +336,7 @@ async def proxy(request: Request, path: str):
 @ollama_app.function(
     gpu="H100:1",
     allow_concurrent_inputs=4,
-    max_containers=1,
     scaledown_window=1200,
-    enable_memory_snapshot=True,
 )
 @modal.asgi_app()
 def ollama_api():

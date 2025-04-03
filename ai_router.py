@@ -39,7 +39,7 @@ web_app.add_middleware(
 )
 
 image = Image.debian_slim().pip_install(
-    ["litellm", "supabase", "pydantic==2.5.3", "fastapi==0.109.0", "openai", "langfuse"]
+    ["litellm", "supabase", "pydantic==2.5.3", "fastapi==0.109.0", "openai", "langfuse", "huggingface-hub"]
 )
 llm_compare_app = App(
     name="llm-compare-api",
@@ -59,6 +59,8 @@ with llm_compare_app.image.imports():
     from litellm import completion, acompletion
     from supabase import create_client, Client
     from openai import OpenAIError
+    from huggingface_hub import repo_info
+    from huggingface_hub.utils import RepositoryNotFoundError
     import re
 
     litellm.set_verbose = True
@@ -189,6 +191,15 @@ class MessageRequest(BaseModel):
     anthropic_api_key: Optional[str] = Field(
         None, description="API key if required by the anthropic provider."
     )
+    huggingface_token: Optional[str] = Field(
+        None, description="API key if required by the huggingface provider."
+    )
+    huggingface_api_base: Optional[str] = Field(
+        None, description="Custom and paid API base for the huggingface provider to use."
+    )
+    huggingface_repo_id: Optional[str] = Field(
+        None, description="Repository ID for the huggingface provider. Often seen as [model_owner]/[model_name]"
+    )
 
 
 class Question(BaseModel):
@@ -209,6 +220,15 @@ class QuestionGenerationRequest(BaseModel):
     )
     anthropic_api_key: Optional[str] = Field(
         None, description="API key if required by the anthropic provider."
+    )
+    huggingface_token: Optional[str] = Field(
+        None, description="API key if required by the huggingface provider."
+    )
+    huggingface_api_base: Optional[str] = Field(
+        None, description="Custom and paid API base for the huggingface provider to use."
+    )
+    huggingface_repo_id: Optional[str] = Field(
+        None, description="Repository ID for the huggingface provider. Often seen as [model_owner]/[model_name]"
     )
 
 
@@ -286,6 +306,7 @@ async def handle_completion(
     api_base: Optional[str] = None,
     output_struct: Optional[BaseModel] = None,
     images: Optional[List[str]] = None,
+    api_key: Optional[str] = None,
     stream: Optional[bool] = False,
 ) -> Union[Any, AsyncGenerator[str, None]]:
     try:
@@ -347,7 +368,7 @@ Your response must be a valid JSON object, not a string containing JSON."""
                 {"role": "system", "content": system_content},
                 {"role": "user", "content": user_content},
             ],
-            "timeout": 180.00,
+            "timeout": 300.00,
             "metadata": {
                 "generation_name": model_name,
             },
@@ -364,7 +385,8 @@ Your response must be a valid JSON object, not a string containing JSON."""
                 completion_kwargs["max_tokens"] = config.max_tokens
             if config.stream is not None:
                 completion_kwargs["stream"] = config.stream
-                completion_kwargs["stream_options"] = {"include_usage": True}
+                if config.stream:
+                    completion_kwargs["stream_options"] = {"include_usage": True}
 
         # Set response format based on the scenario and provider
         if output_struct:
@@ -513,6 +535,9 @@ async def route_model_request(
     openai_api_key: Optional[str] = None,
     anthropic_api_key: Optional[str] = None,
     output_struct: Optional[BaseModel] = None,
+    huggingface_token: Optional[str] = None,
+    huggingface_api_base: Optional[str] = None,
+
 ):
     """Route the request to the appropriate model provider and handle API keys."""
     models = await fetch_models_from_supabase()
@@ -537,7 +562,6 @@ async def route_model_request(
                 output_struct=output_struct,
                 stream=config.stream if config else False,
             )
-
     # Anthropic provider check
     anthropic_model = next(
         (
@@ -561,6 +585,23 @@ async def route_model_request(
                 stream=config.stream if config else False,
             )
 
+    # Hugging face provider check
+    if huggingface_token and huggingface_repo_id:
+        with temporary_env_var("HUGGINGFACE_API_KEY", huggingface_token):
+            logging.info(f"Using Hugging Face provider with model_id: {huggingface_repo_id}")
+            
+            model_id = f"huggingface/{huggingface_repo_id}"
+            
+            return await handle_completion(
+                model_id,
+                message,
+                config=config,
+                images=images,
+                output_struct=output_struct,
+                stream=config.stream if config else False,
+                api_base=huggingface_api_base,
+            )
+    
     cloudflare_model = next(
         (
             m
@@ -603,7 +644,7 @@ async def route_model_request(
             stream=config.stream if config else False,
         )
 
-    # Hugging Face provider check
+    # Hugging Face provider check for your own huggingface repo (not client provided credentials one)
     huggingface_model = next(
         (
             m
@@ -612,7 +653,7 @@ async def route_model_request(
         ),
         None,
     )
-    if huggingface_model:
+    if huggingface_model and not huggingface_token:
         logging.info(
             f"Using Hugging Face provider with model_id: {huggingface_model['model_id']}"
         )
@@ -842,6 +883,9 @@ async def messaging(request: MessageRequest):
             images=request.images,
             openai_api_key=request.openai_api_key,
             anthropic_api_key=request.anthropic_api_key,
+            huggingface_token=request.huggingface_token,
+            huggingface_repo_id=request.huggingface_repo_id,
+            huggingface_api_base=request.huggingface_api_base,
         )
         return StreamingResponse(
             stream_generator,
@@ -860,8 +904,29 @@ async def messaging(request: MessageRequest):
             images=request.images,
             openai_api_key=request.openai_api_key,
             anthropic_api_key=request.anthropic_api_key,
+            huggingface_token=request.huggingface_token,
+            huggingface_repo_id=request.huggingface_repo_id,
+            huggingface_api_base=request.huggingface_api_base,
         )
 
+
+@web_app.get(
+    "/hf_model_validation",
+    response_model=bool,
+    status_code=status.HTTP_200_OK,
+    summary="Validate if huggingface model entered exists and can be used",
+    responses={
+        200: {"description": "Model validation successful."},
+        500: {"description": "Internal Server Error."},
+    },
+)
+async def hf_model_validation(repo_id: str, repo_type: Optional[str] = None, token: Optional[str] = None) -> bool:
+    logging.info(f"Requested model name: {repo_id}")
+    try:
+        repo_info(repo_id, repo_type=repo_type, token=token)
+        return True
+    except RepositoryNotFoundError:
+        return False
 
 @web_app.get(
     "/list_models",

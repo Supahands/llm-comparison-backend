@@ -12,5 +12,9 @@ LIST_OF_REDACTED_WORDS = [
     "Alibaba",
     "Gemma",
     "Mistral", 
-    "Mistral AI"
+    "Mistral AI",
+    "Deepseek",
+    "Deepseek V3",
+    "Deepseek V3.1"
+    
 ]

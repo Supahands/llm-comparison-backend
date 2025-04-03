@@ -49,7 +49,7 @@ MODEL_IDS: list[str] = [
     # "deepseek-v3",
     "deepseek-r1",
     "deepseek-r1:70b",
-    # "gemma3",
+    "gemma3",
     "phi4",
     "phi3:14b",
     "aisingapore/gemma2-9b-cpt-sea-lionv3-instruct",
@@ -166,11 +166,11 @@ image = (
     .env(
         {
             "OLLAMA_MODELS": "/root/models",
-            "OLLAMA_NUM_THREADS": "8",  # Adjust based on CPU cores available
+            "OLLAMA_NUM_THREADS": "16",  # Adjust based on CPU cores available
             "OLLAMA_HOST": "0.0.0.0",
             "OLLAMA_KEEP_ALIVE": "-1",  # Keep models loaded in memory
-            "OLLAMA_MAX_LOADED_MODELS": "1",
-            "OLLAMA_NUM_PARALLEL": "2",
+            "OLLAMA_MAX_LOADED_MODELS": "4",
+            "OLLAMA_NUM_PARALLEL": "4",
         }
     )
     .pip_install("requests")  # for healthchecks
@@ -246,7 +246,7 @@ class OllamaClient:
         if self._client is None or self._client.is_closed:
             self._client = httpx.AsyncClient(
                 base_url=OLLAMA_URL,
-                timeout=httpx.Timeout(180.0, read=180.0),
+                timeout=httpx.Timeout(300.0, read=300.0),
                 limits=httpx.Limits(max_keepalive_connections=50),
             )
         return self._client

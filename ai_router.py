@@ -536,6 +536,7 @@ async def route_model_request(
     anthropic_api_key: Optional[str] = None,
     output_struct: Optional[BaseModel] = None,
     huggingface_token: Optional[str] = None,
+    huggingface_repo_id: Optional[str] = None,
     huggingface_api_base: Optional[str] = None,
 
 ):

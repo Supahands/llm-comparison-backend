@@ -37,7 +37,7 @@ Here you list all prerequisites necessary for running your project. For example:
 
 - Python ^10.10
 - [Modal pip package](https://modal.com/docs/guide)
-- Poetry for dependency management
+- Poetry for dependency management (optional)
  
 <h3>Cloning</h3>
 
@@ -49,29 +49,48 @@ git clone https://github.com/Supahands/llm-comparison-backend.git
  
 <h3>Starting</h3>
 
+First, you'll have to ensure your environments are set up, by default modal will provide you with a `main` environment, you will need to add your secrets to this environment as well as all `deploy` and `serve` commands will be running off of this environment as well, if you plan to create a new environment, you will need to add your secrets to that environment as well.
+
+To create or manage environments on modal, please reffer to this documentation: https://modal.com/docs/guide/environments#environments
+
+Also, for the CLI, you will need to ensure you are logged into Modal as well before running any of the `deploy` or `serve` commands. This can be done using the `modal setup` command, reffer more to this: https://modal.com/docs/guide#:~:text=Getting%20started,modal%20setup 
+
 There are two components to this project, the `ollama` api server as well as the `litellm` server which will be what our frontend uses to connect to and retrieve different models from.
 
 I have added both the applications into a single deploy file which can be run to allow both apps to be spun up at the same time using:
 
 ```bash
-modal deploy --env dev deploy
+modal deploy --env <environment name> deploy
 ```
  
 <h3>Manual Deployment</h3>
 
 **Production Deploy**:
 ```sh
-modal deploy --env dev deploy
+modal deploy --env <environment name> deploy
 ```
 
 **Local Testing**:
 ```sh
-modal serve --env testing deploy
+modal serve --env <environment name> deploy
 ```
 
+<h3>Using the makefile scripts to do all of this <h3>
 
+To install all relevant packages and authenticate with modal
+```sh
+make setup
+```
 
+To deploy the app
+```sh
+make deploy
+```
 
+To serve the app locally
+```sh
+make serve
+```
 
 <h2 id="converter">🔄 GGUF Converter</h2> <h3>Setup</h3>
 

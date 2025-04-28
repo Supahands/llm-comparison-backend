@@ -26,7 +26,9 @@ web_app = FastAPI(
 origins = [
     "http://localhost:3000",
     "https://eval.supa.so",
-    "https://supa-rlhf.vercel.app"
+    "https://supa-rlhf.vercel.app",
+    "https://develop.d3s6vhvxthx2m9.amplifyapp.com",
+    "https://glhf.supa.so"
 ]
 
 # Add CORS middleware
@@ -946,7 +948,7 @@ async def list_models():
     return models
 
 
-@llm_compare_app.function(enable_memory_snapshot=True, scaledown_window=1200)
+@llm_compare_app.function(scaledown_window=1200)
 @asgi_app()
 def fastapi_app():
     logging.info("Starting FastAPI app")

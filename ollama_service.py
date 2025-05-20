@@ -28,6 +28,8 @@ MODEL_IDS: list[str] = [
     "llama3.2:3b-instruct-q8_0",
     "llama3.3:70b-instruct-q2_K",
     "llama3.3:70b-instruct-q6_K",
+    "llama4:latest",
+    "llama4:maverick",
     # "tinyllama:1.1b",
     "deepseek-coder-v2:16b",
     "deepseek-r1:1.5b",
@@ -41,6 +43,8 @@ MODEL_IDS: list[str] = [
     "codellama:70b",
     "qwen2.5-coder:7b",
     "qwen2.5-coder:32b",
+    "qwen2.5vl:latest",
+    "qwen3:latest",
     "medllama2",
     "meditron:7b",
     "meditron:70b",
@@ -51,8 +55,10 @@ MODEL_IDS: list[str] = [
     "deepseek-r1:70b",
     "gemma3",
     "phi4",
+    "phi4-reasoning:latest",
     "phi3:14b",
-    "aisingapore/gemma2-9b-cpt-sea-lionv3-instruct",
+    "aisingapore/Llama-SEA-LION-v3.5-8B-R:latest",
+    "aisingapore/Llama-SEA-LION-v3.5-70B-R:latest",
     "hf.co/Supa-AI/llama3-8b-cpt-sahabatai-v1-instruct-gguf:Q8_0",
     "hf.co/Supa-AI/llama3-8b-cpt-sahabatai-v1-instruct-gguf:Q2_K",
     "hf.co/Supa-AI/Ministral-8B-Instruct-2410-gguf:Q8_0",
@@ -158,7 +164,7 @@ def update_model_db():
 
 image = (
     Image.from_registry(
-        "ollama/ollama:0.6.2",
+        "ollama/ollama:0.7.0",
         add_python="3.11",
     )
     .env(
